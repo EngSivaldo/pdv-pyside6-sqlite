@@ -1,0 +1,10 @@
+# Arquivos e diretórios de cache do Python
+__pycache__/
+*.pyc
+
+# Ambiente virtual (virtual environment)
+venv/
+.venv/
+
+# Arquivo de Banco de Dados SQLite (IMPORTANTE)
+pdv_database.db
