@@ -21,6 +21,8 @@ from core.cart_logic import CartManager
 from ui.product_registration import ProductRegistrationWindow
 from ui.product_list import ProductListWindow 
 from ui.checkout_dialog import CheckoutDialog
+from .cadastro_funcionario_dialog import CadastroFuncionarioDialog 
+from .gerenciar_funcionarios_dialog import GerenciarFuncionariosDialog
 
 
 # ----------------------------------------------------
@@ -51,9 +53,16 @@ def clean_for_comparison(text):
 # ----------------------------------------------------
 
 class PDVWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("PDV - Modularizado e Profissional")
+    def __init__(self, db_connection, logged_user, parent=None): # ⭐️ CORREÇÃO 1: Aceita argumentos
+        super().__init__(parent)
+        
+        # ⭐️ CORREÇÃO 2: Armazena a conexão e o usuário logado 
+        self.db_connection = db_connection 
+        self.logged_user = logged_user 
+        
+        # ⭐️ CORREÇÃO 3: Define o título com o nome e cargo do usuário logado
+        self.setWindowTitle(f"PDV - Usuário: {self.logged_user['nome']} ({self.logged_user['cargo'].upper()})")
+        
         self.setGeometry(100, 100, 1000, 700)
         
         self.cart_manager = CartManager()
@@ -61,16 +70,27 @@ class PDVWindow(QMainWindow):
         # Estado do tema (dark é o padrão styles.qss)
         self.current_theme = 'dark' 
         
-        self.db_connection = connect_db(self)
-        if self.db_connection:
-            create_and_populate_tables(self.db_connection)
-
+        # ❌ A lógica de connect_db() e create_and_populate_tables() foi removida daqui, 
+        # pois agora é tratada de forma centralizada no main.py, antes do login.
+        
         # --- APLICAÇÃO DO STYLESHEET ---
         self._apply_stylesheet('styles.qss') # Carrega o tema dark padrão
         # -----------------------------------------------
 
         self._setup_ui()
         self._setup_cart_model()
+
+    # Em ui/main_window.py, dentro do método _show_employee_registration:
+
+    def _show_employee_registration(self):
+        # Usamos argumentos nomeados para garantir que 'self' seja o 'parent'
+        # e que 'employee_id' seja explicitamente None, forçando o MODO CADASTRO.
+        dialog = CadastroFuncionarioDialog(
+            db_connection=self.db_connection, 
+            employee_id=None, 
+            parent=self
+        )
+        dialog.exec()
 
     # ----------------------------------------------------
     # --- MÉTODOS DE CONTROLE DE TEMA E ESTILO ---
@@ -601,6 +621,33 @@ class PDVWindow(QMainWindow):
         register_button.clicked.connect(self._handle_open_registration)
         checkout_layout.addWidget(register_button)
         
+        # ⭐️ NOVO BOTÃO: Cadastrar Funcionário ⭐️
+        self.register_employee_button = QPushButton("👨‍💼 Cadastrar Funcionário")
+        self.register_employee_button.setFont(QFont("Arial", 12))
+        # Estilo Admin (vermelho/destacado, pois é uma função crítica)
+        self.register_employee_button.setStyleSheet("background-color: #FF5722; color: white; padding: 10px; border-radius: 5px;") 
+        self.register_employee_button.clicked.connect(self._show_employee_registration)
+        checkout_layout.addWidget(self.register_employee_button)
+        
+        
+        # Botão: Gerenciar Funcionários (Listar, Editar, Excluir)
+        self.manage_employee_button = QPushButton("👥 Gerenciar Funcionários")
+        self.manage_employee_button.setFont(QFont("Arial", 12))
+        self.manage_employee_button.setStyleSheet("background-color: #03A9F4; color: white; padding: 10px; border-radius: 5px;") 
+        self.manage_employee_button.clicked.connect(self._show_employee_management)
+        checkout_layout.addWidget(self.manage_employee_button)
+        
+        is_admin = self.logged_user['cargo'] == 'admin'
+        
+        if not is_admin:
+            # Oculta e desabilita o botão de Cadastro
+            self.register_employee_button.setVisible(False)
+            self.register_employee_button.setEnabled(False)
+            
+            # Oculta e desabilita o botão de Gerenciamento
+            self.manage_employee_button.setVisible(False) 
+            self.manage_employee_button.setEnabled(False)
+        
         # 4. Botão Finalizar
         finalize_button = QPushButton("FINALIZAR VENDA (F12)")
         finalize_button.setFont(QFont("Arial", 18, QFont.Bold))
@@ -614,3 +661,17 @@ class PDVWindow(QMainWindow):
 
         self.setCentralWidget(central_widget)
         self.search_input.setFocus()
+    
+    # Em ui/main_window.py, dentro da classe PDVWindow:
+
+    # ... (depois de _show_employee_registration) ...
+    
+    def _show_employee_management(self):
+        """
+        Abre o diálogo de gerenciamento de funcionários.
+        Passa a conexão com o banco de dados.
+        """
+        dialog = GerenciarFuncionariosDialog(self.db_connection, self)
+        dialog.exec()
+        
+        

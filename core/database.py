@@ -18,7 +18,7 @@ def connect_db(parent):
 
 def create_and_populate_tables(conn):
     """
-    Cria as tabelas do sistema (Produtos, Vendas, ItensVenda) e 
+    Cria as tabelas do sistema (Produtos, Funcionarios, Vendas, ItensVenda) e 
     popula a tabela Produtos se estiver vazia.
     """
     if conn is None:
@@ -34,6 +34,18 @@ def create_and_populate_tables(conn):
             preco REAL NOT NULL,
             tipo_medicao TEXT NOT NULL, 
             categoria TEXT NOT NULL 
+        )
+    """)
+    
+    # ⭐️ CORREÇÃO: Nova Tabela Funcionarios (Com Login UNIQUE e senha_hash) ⭐️
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS Funcionarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            login TEXT NOT NULL UNIQUE,
+            senha_hash TEXT NOT NULL,
+            cargo TEXT NOT NULL,
+            data_cadastro TEXT NOT NULL
         )
     """)
 
@@ -82,6 +94,8 @@ def create_and_populate_tables(conn):
 
     conn.commit()
 
+# ... (Restante do arquivo connect_db e get_all_categories permanecem inalterados)
+
 def get_all_categories(conn):
     """Retorna uma lista de todas as categorias únicas de produtos."""
     if conn is None:
@@ -89,3 +103,4 @@ def get_all_categories(conn):
     cursor = conn.cursor()
     cursor.execute("SELECT DISTINCT categoria FROM Produtos ORDER BY categoria")
     return [row[0] for row in cursor.fetchall()]
+
