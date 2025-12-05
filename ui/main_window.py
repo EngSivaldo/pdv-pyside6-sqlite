@@ -1,13 +1,18 @@
-# ui/main_window.py
+# ui/main_window.py - VERSÃO LIMPA (SEM DEBUG)
 
 import sqlite3
 import datetime 
+import os 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-    QLabel, QLineEdit, QTableView, QMessageBox, QCompleter, QInputDialog # Importado QCompleter
+    QLabel, QLineEdit, QTableView, QMessageBox, QCompleter, QInputDialog, QDialog 
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
+
+# IMPORTS PARA NORMALIZAÇÃO/BUSCA SEM ACENTOS
+from unidecode import unidecode
+import re
 
 # Importa a lógica (core)
 from core.database import connect_db, create_and_populate_tables 
@@ -15,6 +20,35 @@ from core.cart_logic import CartManager
 # Importa as novas janelas
 from ui.product_registration import ProductRegistrationWindow
 from ui.product_list import ProductListWindow 
+from ui.checkout_dialog import CheckoutDialog
+
+
+# ----------------------------------------------------
+# --- FUNÇÕES DE NORMALIZAÇÃO PARA BUSCA (PDV) ---
+# ----------------------------------------------------
+
+def normalize_text(text):
+    """
+    Converte o texto para minúsculas e remove acentos/cedilhas 
+    usando unidecode para uma busca robusta.
+    """
+    if text is None:
+        return ""
+    text_str = str(text).strip()
+    normalized = unidecode(text_str)
+    return normalized.lower()
+
+def clean_for_comparison(text):
+    """Remove caracteres especiais, espaços e pontuações do texto normalizado."""
+    normalized = normalize_text(text)
+    # Remove qualquer coisa que não seja letra ou número (a-z, 0-9)
+    cleaned = re.sub(r'[^a-z0-9]', '', normalized) 
+    return cleaned
+
+
+# ----------------------------------------------------
+# --- CLASSE PRINCIPAL PDVWindow ---
+# ----------------------------------------------------
 
 class PDVWindow(QMainWindow):
     def __init__(self):
@@ -24,15 +58,67 @@ class PDVWindow(QMainWindow):
         
         self.cart_manager = CartManager()
         
+        # Estado do tema (dark é o padrão styles.qss)
+        self.current_theme = 'dark' 
+        
         self.db_connection = connect_db(self)
         if self.db_connection:
             create_and_populate_tables(self.db_connection)
 
+        # --- APLICAÇÃO DO STYLESHEET ---
+        self._apply_stylesheet('styles.qss') # Carrega o tema dark padrão
+        # -----------------------------------------------
+
         self._setup_ui()
         self._setup_cart_model()
 
-    # --- Métodos de Lógica ---
+    # ----------------------------------------------------
+    # --- MÉTODOS DE CONTROLE DE TEMA E ESTILO ---
+    # ----------------------------------------------------
 
+    def _apply_stylesheet(self, filename):
+        """Carrega e aplica o stylesheet dado pelo nome do arquivo (localizado na raiz do projeto)."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        # Volta um nível para a pasta raiz do projeto
+        style_path = os.path.join(base_dir, '..', filename) 
+        
+        if os.path.exists(style_path):
+            try:
+                with open(style_path, 'r') as f:
+                    self.setStyleSheet(f.read())
+                # print(f"LOG: Stylesheet '{filename}' carregado com sucesso.")
+                return True
+            except Exception as e:
+                # print(f"ERRO ao carregar o stylesheet '{filename}': {e}")
+                return False
+        else:
+            # print(f"ALERTA: Stylesheet '{filename}' não encontrado em: {style_path}")
+            return False
+
+    def _toggle_theme(self):
+        """Alterna entre o tema Dark (styles.qss) e o tema Light (styles_light.qss)."""
+        
+        if self.current_theme == 'dark':
+            # Tenta carregar o tema CLARO
+            if self._apply_stylesheet('styles_light.qss'):
+                self.current_theme = 'light'
+                # Próxima opção deve ser ESCURO
+                self.theme_button.setText("Tema: 🌙 ESCURO") 
+                self.theme_button.setStyleSheet("background-color: #607D8B; color: white; padding: 10px; border-radius: 5px;")
+        
+        else: # current_theme == 'light'
+            # Tenta carregar o tema ESCURO
+            if self._apply_stylesheet('styles.qss'): # styles.qss é o seu tema ESCURO original
+                self.current_theme = 'dark'
+                # Próxima opção deve ser CLARO
+                self.theme_button.setText("Tema: ☀️ CLARO") 
+                self.theme_button.setStyleSheet("background-color: #9E9E9E; color: white; padding: 10px; border-radius: 5px;")
+
+
+    # ----------------------------------------------------
+    # --- MÉTODOS DE LÓGICA E INTERFACE ---
+    # ----------------------------------------------------
+    
     def _update_total_display(self, total: float):
         """Atualiza o display de total formatando corretamente."""
         formatted_total = f"R$ {total:,.2f}".replace('.', '#').replace(',', '.').replace('#', ',')
@@ -59,8 +145,16 @@ class PDVWindow(QMainWindow):
             item_preco.setTextAlignment(Qt.AlignRight)
             row.append(item_preco)
             
-            # 4. Quantidade
-            item_quant = QStandardItem(str(item['quantidade']))
+            # 4. Quantidade (Formatada para peso ou unidade)
+            tipo = item.get('tipo', 'Unidade').lower()
+            if tipo == 'peso':
+                # Mostra 3 casas decimais para peso
+                quant_str = f"{item['quantidade']:,.3f}".replace('.', '#').replace(',', '.').replace('#', ',')
+            else:
+                # Mostra 0 ou 2 casas decimais para unidade/outros
+                quant_str = f"{item['quantidade']:.0f}" if item['quantidade'].is_integer() else f"{item['quantidade']:,.2f}".replace('.', '#').replace(',', '.').replace('#', ',')
+                
+            item_quant = QStandardItem(quant_str)
             item_quant.setTextAlignment(Qt.AlignCenter)
             row.append(item_quant)
 
@@ -73,6 +167,10 @@ class PDVWindow(QMainWindow):
         
         self.cart_table.scrollToBottom()
 
+    # Dentro de ui/main_window.py
+
+    # Em ui/main_window.py
+
     def _setup_autocompleter(self):
         """Busca todos os nomes/códigos de produtos e configura o QCompleter no campo de busca."""
         if not self.db_connection:
@@ -81,46 +179,63 @@ class PDVWindow(QMainWindow):
         cursor = self.db_connection.cursor()
         cursor.execute("SELECT codigo, nome FROM Produtos")
         
-        product_names = []
+        product_suggestions = []
         for codigo, nome in cursor.fetchall():
-            # Adiciona tanto o nome quanto o código à lista de sugestões
-            product_names.append(nome)
-            product_names.append(codigo) 
-
-        # Cria o modelo e o QCompleter
-        completer = QCompleter(product_names, self)
+            product_suggestions.append(nome)
+            product_suggestions.append(codigo) 
+            
+        completer = QCompleter(product_suggestions, self)
         
-        # MUDANÇA: Agora só sugere nomes/códigos que *começam* com o texto digitado.
-        completer.setFilterMode(Qt.MatchStartsWith) 
+        # ⭐️ CORREÇÃO CHAVE: Usar MatchContains permite que a busca encontre o termo digitado em qualquer lugar da string.
+        completer.setFilterMode(Qt.MatchStartsWith)
+        
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         
+        # Conecta o completer ao campo de entrada
         self.search_input.setCompleter(completer)
 
-    def _find_product_by_exact_match(self, search_text):
-        """Busca por um produto por código exato ou nome exato (case-insensitive)."""
-        if not self.db_connection or not search_text:
-            return None
+    def _show_quantity_dialog(self, product_data):
+        """
+        Abre um diálogo para confirmar e alterar a quantidade/peso do produto.
+        Retorna a nova quantidade (float), ou None se cancelado.
+        
+        Atenção: product_data[3] agora é 'tipo_medicao'.
+        """
+        
+        # Cria uma instância do QInputDialog e remove temporariamente o stylesheet
+        dialog = QInputDialog(self)
+        dialog.setStyleSheet("") 
+        
+        # O product_data é a tupla de 5 elementos: (codigo, nome, preco, tipo_medicao, categoria)
+        nome_produto = product_data[1]
+        # Usamos o índice 3, que agora é tipo_medicao
+        tipo_produto = product_data[3] if product_data[3] is not None else 'Unidade' 
+        
+        if tipo_produto.lower() == 'peso': 
+            label = f"Digite o PESO para {nome_produto} (Kg):"
+            initial_value = 1.000
             
-        cursor = self.db_connection.cursor()
-        
-        # 1. Busca por Código (Sempre Exata)
-        cursor.execute("SELECT codigo, nome, preco, tipo FROM Produtos WHERE codigo = ?", (search_text,))
-        result = cursor.fetchone()
-        if result:
-            return result
-        
-        # 2. Busca por Nome Exato (Case-Insensitive)
-        cursor.execute(
-            "SELECT codigo, nome, preco, tipo FROM Produtos WHERE LOWER(nome) = ? LIMIT 1",
-            (search_text.lower(),)
-        )
-        return cursor.fetchone()
+            new_quantity, ok = dialog.getDouble(
+                dialog, "Confirmar Peso/Quantidade", label, 
+                value=initial_value, decimals=3 
+            )
+        else:
+            label = f"Digite a QUANTIDADE para {nome_produto}:"
+            initial_value = 1
+            new_quantity, ok = dialog.getInt(
+                dialog, "Confirmar Quantidade", label, 
+                value=initial_value
+            )
 
-    # ui/main_window.py (Modificação em def _handle_add_item(self):)
-
+        if ok and new_quantity > 0:
+            return float(new_quantity) # Garante que o retorno é float
+        
+        return None
+    
     def _handle_add_item(self):
         """
-        Busca o produto no BD e abre o diálogo de quantidade para confirmação.
+        Lida com a adição de item ao carrinho, incluindo busca exata, busca por código 
+        limpo/nome limpo e tratamento de ambiguidade (múltiplos matches).
         """
         search_text = self.search_input.text().strip()
         if not search_text:
@@ -129,67 +244,80 @@ class PDVWindow(QMainWindow):
 
         product_data = None
         
+        # 1. NORMALIZAÇÃO DA BUSCA
+        normalized_search = clean_for_comparison(search_text) 
+        
         if self.db_connection:
             cursor = self.db_connection.cursor()
             
-            # 1. Tenta Busca Exata (código ou nome)
-            product_data = self._find_product_by_exact_match(search_text)
-            
-            if not product_data:
-                # 2. Se não for exato, tenta Buscas Parcial (pega o primeiro resultado)
-                query_name = f"%{search_text.lower()}%"
-                cursor.execute(
-                    "SELECT codigo, nome, preco, tipo FROM Produtos WHERE LOWER(nome) LIKE ? LIMIT 1",
-                    (query_name,)
-                )
-                product_data = cursor.fetchone()
+            # 2. Busca por Código Exato (Prioridade Máxima)
+            # CORRIGIDO: Selecionando as 5 colunas da nova estrutura
+            cursor.execute("SELECT codigo, nome, preco, tipo_medicao, categoria FROM Produtos WHERE codigo = ?", (search_text,))
+            product_data = cursor.fetchone()
 
+            # 3. Busca Parcial (se não encontrou por código exato)
+            if not product_data:
+                # CORRIGIDO: Selecionando as 5 colunas da nova estrutura
+                cursor.execute("SELECT codigo, nome, preco, tipo_medicao, categoria FROM Produtos")
+                all_products = cursor.fetchall()
+                
+                matching_products = []
+                
+                for row in all_products:
+                    # CORRIGIDO: Desempacotando as 5 colunas
+                    codigo, nome, preco, tipo_medicao, categoria = row
+                    
+                    # Normaliza o nome e o código do produto no BD para comparação
+                    normalized_name_db = clean_for_comparison(nome)
+                    normalized_codigo_db = clean_for_comparison(codigo)
+                    
+                    # Verifica se o texto normalizado de busca está CONTIDO no código OU no nome normalizado do BD
+                    if normalized_search in normalized_codigo_db or normalized_search in normalized_name_db:
+                        matching_products.append(row)
+
+                # Analisa os matches parciais
+                if len(matching_products) == 1:
+                    # Achou um match único
+                    product_data = matching_products[0]
+                
+                elif len(matching_products) > 1:
+                    # Encontrou múltiplos matches (ambiguidade)
+                    
+                    # ⭐️ 1. Chama a nova função de seleção (vamos criá-la logo abaixo)
+                    selected_product = self._show_selection_dialog(matching_products)
+                    
+                    if selected_product:
+                        # Se o usuário escolheu, product_data recebe o item escolhido
+                        product_data = selected_product 
+                        # O fluxo continua para o Passo 4 (Lógica de Adição)
+                        
+                    else:
+                        # Se o usuário cancelou o diálogo de seleção, limpamos e saímos.
+                        self.search_input.clear() 
+                        self.search_input.setFocus()
+                        return # Sai da função sem adicionar nada
+                    
+            # 4. Lógica de Adição (executada APENAS se product_data for encontrado e não for ambíguo)
             if product_data:
-                # --- NOVO: Chamada ao Diálogo de Quantidade ---
+                
+                # Chama o diálogo de quantidade (usa product_data[3], que agora é tipo_medicao)
                 new_quantity = self._show_quantity_dialog(product_data)
 
                 if new_quantity is not None:
-                    # Adiciona o item com a quantidade confirmada
-                    # NOTA: O CartManager.add_item agora precisa aceitar a quantidade
-                    # Já que o CartManager original só aceita (product_data), vamos ajustar a chamada
-                    # para _add_item_to_cart_manager, que será ligeiramente diferente
-                    
-                    # Para simplificar, vou assumir que CartManager.add_item aceita (product_data, quantidade)
-                    # Se seu CartManager precisar de ajuste, por favor, me avise.
-                    
-                    # Por enquanto, vamos manter o add_item simples e lidar com a lógica de QUANTIDADE
-                    # O CartManager original, que você me passou, só adicionava 1. Vamos simular a adição:
-                    
-                    # 1. Remova o item do carrinho se ele já existir (para garantir que a alteração seja feita)
-                    # Se o produto já estiver no carrinho, vamos apenas atualizar a quantidade total dele.
-                    
-                    # Melhor abordagem: Adicione o item, e o CartManager irá somar ou substituir.
-                    # Mas como o _show_quantity_dialog é chamado APÓS a busca, vamos garantir que ele seja adicionado corretamente.
-
-                    # Para funcionar perfeitamente, precisamos que `CartManager` saiba lidar com a adição de uma quantidade específica.
-                    # Já que eu não tenho o `CartManager`, vou criar uma versão auxiliar para adicionar a quantidade correta.
-
-                    codigo = product_data[0]
-                    nome = product_data[1]
-                    preco = product_data[2]
-                    tipo = product_data[3]
-
-                    # A lógica aqui é limpar o campo de busca ANTES de atualizar o carrinho
-                    self.search_input.clear()
-                    
-                    # Adiciona o item (o CartManager deve suportar este formato, mesmo que seja para adicionar a quantidade inicial)
+                    # Passa a tupla de 5 elementos para o CartManager. 
+                    # Assumimos que o CartManager usa o 4º elemento (índice 3: tipo_medicao) como 'tipo'.
                     self.cart_manager.add_item(
-                        (codigo, nome, preco, tipo), 
-                        quantity=new_quantity # Passando a nova quantidade
+                        product_data, 
+                        quantity=new_quantity 
                     )
                     
+                    self.search_input.clear()
                     total = self.cart_manager.calculate_total()
                     self._update_total_display(total)
                     self._update_cart_table() 
-                
-                # Se new_quantity for None, o usuário cancelou, e nada acontece
-                
+            
             else:
+                # Se não encontrou nem por código exato, nem por nome único
                 QMessageBox.critical(self, "Erro", f"Produto com código/nome '{search_text}' não encontrado.")
 
         self.search_input.setFocus()
@@ -209,79 +337,160 @@ class PDVWindow(QMainWindow):
 
         self.search_input.clear()
         self.search_input.setFocus()
-        
+
+    def _record_sale(self, total: float, received: float, change: float):
+        """Registra a transação de venda e seus itens no banco de dados."""
+        if not self.db_connection: return False
+
+        try:
+            cursor = self.db_connection.cursor()
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # 1. Registrar a Venda Principal
+            cursor.execute(
+                "INSERT INTO Vendas (data_hora, total_venda, valor_recebido, troco) VALUES (?, ?, ?, ?)",
+                (timestamp, total, received, change)
+            )
+            venda_id = cursor.lastrowid 
+
+            # 2. Registrar os Itens da Venda
+            items_to_insert = []
+            for item in self.cart_manager.cart_items:
+                items_to_insert.append((
+                    venda_id,
+                    item['codigo'],
+                    item['nome'],
+                    item['quantidade'],
+                    item['preco'] 
+                ))
+
+            cursor.executemany(
+                "INSERT INTO ItensVenda (venda_id, produto_codigo, nome_produto, quantidade, preco_unitario) VALUES (?, ?, ?, ?, ?)",
+                items_to_insert
+            )
+            
+            self.db_connection.commit()
+            return True
+
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Erro de Banco de Dados", f"Falha ao registrar a venda: {e}")
+            self.db_connection.rollback()
+            return False
+    
     def _handle_finalize_sale(self):
-        """Finaliza a venda, valida valores e limpa o carrinho (F12)."""
+        """Abre o diálogo de Checkout para confirmação de pagamento e registra a venda."""
         
         total = self.cart_manager.calculate_total()
         
-        try:
-            received_text = self.received_input.text().replace(',', '.').strip()
-            received = float(received_text)
-        except ValueError:
-            QMessageBox.critical(self, "Erro de Valor", "Valores de Recebido são inválidos.")
-            return
-
         if total <= 0:
             QMessageBox.warning(self, "Aviso", "Carrinho está vazio. Venda não finalizada.")
             return
+            
+        checkout_dialog = CheckoutDialog(total_venda=total, parent=self)
+        
+        if checkout_dialog.exec() == QDialog.Accepted:
+            # Venda foi aceita na tela de Checkout
+            received = checkout_dialog.valor_recebido
+            troco = checkout_dialog.troco
+            
+            if not self._record_sale(total, received, troco): 
+                return
 
-        troco = received - total
+            formatted_troco = f"R$ {troco:,.2f}".replace('.', '#').replace(',', '.').replace('#', ',')
+            QMessageBox.information(self, "Venda Concluída", f"Troco: {formatted_troco}")
+            
+            # Limpa o carrinho e a interface
+            self.cart_manager.clear_cart()
+            self._update_cart_table()
+            self._update_total_display(0.0)
+            self.received_input.setText("0.00")
+            self.search_input.setFocus()
+    
+    # --- EDIÇÃO DE QUANTIDADE POR CLIQUE DUPLO ---
+    
+    def _handle_edit_quantity(self, index):
+        """Lida com o clique duplo na tabela para editar a quantidade do item."""
+        
+        QUANTITY_COLUMN_INDEX = 3
+        CODE_COLUMN_INDEX = 0
 
-        if troco < 0:
-            QMessageBox.critical(self, "Valor Insuficiente", f"Faltam R$ {abs(troco):.2f}".replace('.', '#').replace(',', '.').replace('#', ',') + ". Valor recebido é menor que o total.")
+        if index.column() != QUANTITY_COLUMN_INDEX:
             return
 
-        # -------------------------------------------------------------
-        # NOTE: AQUI DEVE ENTRAR A FUNÇÃO DE PERSISTÊNCIA DA VENDA
-        # -------------------------------------------------------------
+        row = index.row()
+        # Pega o código do produto para buscar o item no CartManager
+        codigo = self.cart_model.data(self.cart_model.index(row, CODE_COLUMN_INDEX))
         
-        formatted_troco = f"R$ {troco:,.2f}".replace('.', '#').replace(',', '.').replace('#', ',')
-        QMessageBox.information(self, "Venda Concluída", f"Troco: {formatted_troco}")
+        current_item = next((item for item in self.cart_manager.cart_items if item['codigo'] == codigo), None)
         
-        # Limpa o carrinho e a interface
-        self.cart_manager.clear_cart()
-        self._update_cart_table()
-        self._update_total_display(0.0)
-        self.received_input.setText("0.00")
-        self.search_input.setFocus()
+        if not current_item:
+            QMessageBox.warning(self, "Erro", "Item não encontrado no carrinho.")
+            return
 
-    # --- Métodos para Abrir Novas Janelas ---
-
-    def _handle_open_registration(self):
-        """Abre a janela de cadastro de produtos."""
-        self.registration_window = ProductRegistrationWindow(self.db_connection)
-        self.registration_window.exec()
-
-    def _handle_open_product_list(self):
-        """Abre a janela de consulta e listagem de produtos."""
-        self.list_window = ProductListWindow(self.db_connection)
-        self.list_window.exec()
+        current_quantity = current_item['quantidade']
+        # Usa a chave 'tipo', que é como o CartManager armazena a informação (originalmente index 3)
+        tipo = current_item.get('tipo', 'Unidade').lower() 
         
-    # --- Configurações da UI e Atalhos ---
+        # Cria um diálogo temporário sem estilo para evitar warnings
+        dialog = QInputDialog(self)
+        dialog.setStyleSheet("") 
+
+        if tipo == 'peso':
+            label = f"Novo PESO para {current_item['nome']} (Kg):"
+            initial_value = float(current_quantity)
+            
+            new_quantity, ok = dialog.getDouble(
+                self, "Editar Peso/Quantidade", label, 
+                value=initial_value, decimals=3 
+            )
+        else:
+            label = f"Nova QUANTIDADE para {current_item['nome']}:"
+            # Tenta usar int para unidade
+            initial_value = int(current_quantity) if current_quantity.is_integer() else round(current_quantity)
+
+            new_quantity, ok = dialog.getInt(
+                self, "Editar Quantidade", label, 
+                value=initial_value
+            )
+
+        if ok and new_quantity is not None:
+            if new_quantity <= 0:
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Remover Item")
+                msg_box.setText("Quantidade zero ou negativa. Deseja remover o item do carrinho?")
+                msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                msg_box.setDefaultButton(QMessageBox.No)
+                
+                if msg_box.exec() == QMessageBox.Yes:
+                    # update_quantity com 0 remove
+                    self.cart_manager.update_quantity(codigo, 0) 
+                else:
+                    return 
+            else:
+                self.cart_manager.update_quantity(codigo, float(new_quantity))
+
+            total = self.cart_manager.calculate_total()
+            self._update_total_display(total)
+            self._update_cart_table()
+
+    # ----------------------------------------------------
+    # --- MÉTODOS DE SETUP E EVENTOS ---
+    # ----------------------------------------------------
 
     def keyPressEvent(self, event):
-        """Captura eventos de teclado para implementar atalhos (shortcuts) essenciais ao PDV."""
+        """Captura eventos de teclado para implementar atalhos (shortcuts)."""
         
         if event.key() == Qt.Key_F4:
             self._handle_remove_item()
         
         elif event.key() == Qt.Key_F12:
-            total = self.cart_manager.calculate_total()
-            
-            if self.received_input.hasFocus() and total > 0:
+            if self.cart_manager.calculate_total() > 0:
                 self._handle_finalize_sale()
-            elif total > 0:
-                self.received_input.setFocus()
-            
+        
         elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
-            
             if self.search_input.hasFocus():
-                self._handle_add_item() # Enter chama a função de adição/busca
+                self._handle_add_item()
             
-            elif self.received_input.hasFocus() and self.cart_manager.calculate_total() > 0:
-                self._handle_finalize_sale()
-
         super().keyPressEvent(event)
 
     def _setup_cart_model(self):
@@ -293,6 +502,21 @@ class PDVWindow(QMainWindow):
         self.cart_table.setColumnWidth(2, 100)
         self.cart_table.setColumnWidth(3, 80)
         self.cart_table.setColumnWidth(4, 100)
+        self.cart_table.setSelectionBehavior(QTableView.SelectRows)
+        self.cart_table.setEditTriggers(QTableView.NoEditTriggers)
+
+        # Conecta o sinal de clique duplo para edição de quantidade
+        self.cart_table.doubleClicked.connect(self._handle_edit_quantity)
+
+    def _handle_open_registration(self):
+        """Abre a janela de cadastro de produtos."""
+        self.registration_window = ProductRegistrationWindow(self.db_connection)
+        self.registration_window.exec()
+
+    def _handle_open_product_list(self):
+        """Abre a janela de consulta e listagem de produtos."""
+        self.list_window = ProductListWindow(self.db_connection)
+        self.list_window.exec()
 
     def _setup_ui(self):
         """Configura os layouts e widgets da janela."""
@@ -311,7 +535,6 @@ class PDVWindow(QMainWindow):
         self.search_input.setPlaceholderText("Digite o código ou nome do produto. Use Enter para adicionar.")
         self.search_input.setFont(QFont("Arial", 14))
         
-        # Configura o Auto-Completar (Lista de Sugestões que *começam* com o texto)
         self._setup_autocompleter()
         
         add_button = QPushButton("Adicionar (Enter)")
@@ -342,15 +565,15 @@ class PDVWindow(QMainWindow):
         
         # 1. Área do TOTAL (Display)
         self.total_display = QLabel("R$ 0,00")
+        self.total_display.setObjectName("totalDisplay") # Importante para o Stylesheet
         self.total_display.setFont(QFont("Arial", 32, QFont.Bold))
         self.total_display.setAlignment(Qt.AlignCenter)
-        self.total_display.setStyleSheet("background-color: #D32F2F; color: white; padding: 20px; border-radius: 5px;")
         
         checkout_layout.addWidget(QLabel("TOTAL DA VENDA:", alignment=Qt.AlignCenter))
         checkout_layout.addWidget(self.total_display)
         checkout_layout.addSpacing(40) 
 
-        # 2. Campo de Valor Recebido
+        # 2. Campo de Valor Recebido (Apenas visual, o cálculo real está no CheckoutDialog)
         checkout_layout.addWidget(QLabel("VALOR RECEBIDO:", alignment=Qt.AlignCenter))
         self.received_input = QLineEdit("0.00")
         self.received_input.setFont(QFont("Arial", 16))
@@ -358,6 +581,13 @@ class PDVWindow(QMainWindow):
         checkout_layout.addWidget(self.received_input)
         
         # 3. Botões Administrativos
+        
+        # Botão de Troca de Tema
+        self.theme_button = QPushButton("Tema: ☀️ CLARO") 
+        self.theme_button.setFont(QFont("Arial", 12))
+        self.theme_button.setStyleSheet("background-color: #9E9E9E; color: white; padding: 10px; border-radius: 5px;")
+        self.theme_button.clicked.connect(self._toggle_theme)
+        checkout_layout.addWidget(self.theme_button) 
         
         list_button = QPushButton("📋 Consultar Produtos")
         list_button.setFont(QFont("Arial", 12))
@@ -384,42 +614,3 @@ class PDVWindow(QMainWindow):
 
         self.setCentralWidget(central_widget)
         self.search_input.setFocus()
-    
-    # ui/main_window.py (Novo método na classe PDVWindow)
-
-    # ui/main_window.py (Modificação no método _show_quantity_dialog)
-
-    # ui/main_window.py (dentro de def _show_quantity_dialog(self):)
-
-    def _show_quantity_dialog(self, product_data):
-        """
-        Abre um diálogo para confirmar e alterar a quantidade/peso do produto.
-        Retorna a nova quantidade (float), ou None se cancelado.
-        """
-        nome_produto = product_data[1] # Nome do produto
-        
-        # ⚠️ CORREÇÃO AQUI: Garante que tipo_produto não é None e padroniza para 'Unidade' se for
-        tipo_produto = product_data[3] if product_data[3] is not None else 'Unidade' 
-        
-        # Se for 'Peso', continua a lógica de double; caso contrário, usa int (para 'Unidade' ou qualquer outro valor)
-        if tipo_produto.lower() == 'peso': 
-            label = f"Digite o PESO para {nome_produto} (Kg):"
-            initial_value = 1.000
-            # ... (resto do código para getDouble) ...
-            new_quantity, ok = QInputDialog.getDouble(
-                self, "Confirmar Peso/Quantidade", label, 
-                value=initial_value, decimals=3 
-            )
-        else:
-            # ... (resto do código para getInt) ...
-            label = f"Digite a QUANTIDADE para {nome_produto}:"
-            initial_value = 1
-            new_quantity, ok = QInputDialog.getInt(
-                self, "Confirmar Quantidade", label, 
-                value=initial_value
-            )
-
-        if ok:
-            return new_quantity
-        
-        return None

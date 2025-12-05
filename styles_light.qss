@@ -1,0 +1,123 @@
+/* styles_light.qss - Tema Clean Commerce Light */
+
+/* ==================== BASE GERAL (Foco na Legibilidade Clara) ==================== */
+
+QWidget {
+    background-color: #F8F8F8; /* Fundo principal claro */
+    color: #333333; /* Cor padrão do texto (quase preto) */
+    font-family: 'Roboto', 'Arial', sans-serif;
+    font-size: 11pt;
+}
+
+QLabel {
+    color: #333333;
+}
+
+/* Campos de Input (Busca, Recebido) */
+QLineEdit, QDoubleSpinBox, QSpinBox {
+    background-color: #FFFFFF; /* Fundo do campo branco */
+    border: 1px solid #CCCCCC;
+    padding: 10px; 
+    border-radius: 6px;
+    color: #333333;
+    font-size: 12pt;
+}
+
+/* Estilo para o texto selecionado dentro dos campos */
+QLineEdit::selection, QDoubleSpinBox::selection, QSpinBox::selection {
+    background-color: #FF9800; /* Laranja de destaque */
+    color: #FFFFFF; 
+}
+
+/* ==================== BOTÕES (Ação e Prioridade) ==================== */
+
+QPushButton {
+    background-color: #E0E0E0; /* Botão padrão cinza claro */
+    color: #333333;
+    border: none;
+    padding: 12px;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #CCCCCC;
+}
+
+/* Botão Adicionar (Ação Positiva - Verde) */
+QPushButton[text*="Adicionar"] {
+    background-color: #4CAF50; /* Verde de sucesso */
+    color: #FFFFFF;
+    font-weight: bold;
+}
+QPushButton[text*="Adicionar"]:hover {
+    background-color: #66BB6A;
+}
+
+/* Botão Remover (Ação de Alerta/Reversão - Laranja/Vermelho) */
+QPushButton[text*="Remover"] {
+    background-color: #F44336; /* Vermelho de Alerta */
+    color: #FFFFFF;
+}
+QPushButton[text*="Remover"]:hover {
+    background-color: #E57373;
+}
+
+/* Botão Finalizar Venda (Ação Crítica/Pagamento) */
+QPushButton[text*="FINALIZAR"] {
+    background-color: #00796B; /* Teal escuro */
+    color: #FFFFFF;
+    font-size: 16pt;
+    font-weight: 900;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+QPushButton[text*="FINALIZAR"]:hover {
+    background-color: #00897B;
+}
+
+/* ==================== TABELA (QTableView) ==================== */
+
+QTableView {
+    background-color: #FFFFFF; /* Fundo da tabela branco */
+    border: 1px solid #4CAF50; 
+    color: #333333;
+    gridline-color: #DDDDDD; 
+}
+
+/* Estiliza o cabeçalho (Header) */
+QHeaderView::section {
+    background-color: #EEEEEE; /* Fundo do cabeçalho cinza claro */
+    color: #333333; 
+    padding: 8px;
+    border-bottom: 2px solid #00796B; /* Linha de destaque Teal */
+    font-weight: bold;
+    font-size: 12pt;
+}
+
+/* Estiliza a borda de CADA CÉLULA */
+QTableView::item {
+    background-color: #FFFFFF; 
+    border-bottom: 1px solid #EEEEEE;
+    border-right: 1px solid #EEEEEE;
+    padding: 5px;
+}
+
+/* Destaque da linha selecionada */
+QTableView QAbstractItemView::item:selected {
+    background-color: #B2DFDB; /* Teal claro */
+    color: #333333; 
+}
+
+/* ==================== DISPLAY DE TOTAL (Foco Máximo) ==================== */
+
+#totalDisplay { /* Seletor usando o objectName */
+    background-color: #00796B; /* Teal escuro */
+    color: #FFFFFF; /* Texto branco */
+    padding: 30px;
+    border-radius: 10px;
+    font-size: 52pt;
+    font-weight: 900;
+    text-align: center;
+}
