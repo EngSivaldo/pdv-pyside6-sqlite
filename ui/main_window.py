@@ -1,9 +1,10 @@
 # ui/main_window.py
 
 import sqlite3
+import datetime 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-    QLabel, QLineEdit, QTableView, QMessageBox
+    QLabel, QLineEdit, QTableView, QMessageBox, QCompleter, QInputDialog # Importado QCompleter
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
@@ -54,7 +55,7 @@ class PDVWindow(QMainWindow):
             row.append(QStandardItem(item['nome']))
             
             # 3. Preço Unitário (Formatado)
-            item_preco = QStandardItem(f"{item['preco']:,.2f}")
+            item_preco = QStandardItem(f"{item['preco']:,.2f}".replace('.', '#').replace(',', '.').replace('#', ','))
             item_preco.setTextAlignment(Qt.AlignRight)
             row.append(item_preco)
             
@@ -64,44 +65,137 @@ class PDVWindow(QMainWindow):
             row.append(item_quant)
 
             # 5. Total por Item (Formatado)
-            item_total = QStandardItem(f"{total_item:,.2f}")
+            item_total = QStandardItem(f"{total_item:,.2f}".replace('.', '#').replace(',', '.').replace('#', ','))
             item_total.setTextAlignment(Qt.AlignRight)
             row.append(item_total)
             
             self.cart_model.appendRow(row)
         
-        self.cart_table.scrollToBottom() # Mantém o scroll no item adicionado
+        self.cart_table.scrollToBottom()
+
+    def _setup_autocompleter(self):
+        """Busca todos os nomes/códigos de produtos e configura o QCompleter no campo de busca."""
+        if not self.db_connection:
+            return
+            
+        cursor = self.db_connection.cursor()
+        cursor.execute("SELECT codigo, nome FROM Produtos")
+        
+        product_names = []
+        for codigo, nome in cursor.fetchall():
+            # Adiciona tanto o nome quanto o código à lista de sugestões
+            product_names.append(nome)
+            product_names.append(codigo) 
+
+        # Cria o modelo e o QCompleter
+        completer = QCompleter(product_names, self)
+        
+        # MUDANÇA: Agora só sugere nomes/códigos que *começam* com o texto digitado.
+        completer.setFilterMode(Qt.MatchStartsWith) 
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        
+        self.search_input.setCompleter(completer)
+
+    def _find_product_by_exact_match(self, search_text):
+        """Busca por um produto por código exato ou nome exato (case-insensitive)."""
+        if not self.db_connection or not search_text:
+            return None
+            
+        cursor = self.db_connection.cursor()
+        
+        # 1. Busca por Código (Sempre Exata)
+        cursor.execute("SELECT codigo, nome, preco, tipo FROM Produtos WHERE codigo = ?", (search_text,))
+        result = cursor.fetchone()
+        if result:
+            return result
+        
+        # 2. Busca por Nome Exato (Case-Insensitive)
+        cursor.execute(
+            "SELECT codigo, nome, preco, tipo FROM Produtos WHERE LOWER(nome) = ? LIMIT 1",
+            (search_text.lower(),)
+        )
+        return cursor.fetchone()
+
+    # ui/main_window.py (Modificação em def _handle_add_item(self):)
 
     def _handle_add_item(self):
-        """Busca o produto no BD e delega a adição ao CartManager."""
-        code = self.search_input.text().strip()
-        if not code:
-            QMessageBox.warning(self, "Aviso", "Por favor, digite um código de produto.")
+        """
+        Busca o produto no BD e abre o diálogo de quantidade para confirmação.
+        """
+        search_text = self.search_input.text().strip()
+        if not search_text:
+            QMessageBox.warning(self, "Aviso", "Por favor, digite o código ou o nome do produto.")
             return
 
+        product_data = None
+        
         if self.db_connection:
             cursor = self.db_connection.cursor()
-            # Busca pelo CÓDIGO (agora pode ser o código alfanumérico)
-            cursor.execute("SELECT codigo, nome, preco, tipo FROM Produtos WHERE codigo = ?", (code,))
-            result = cursor.fetchone()
             
-            if result:
-                # Chama a lógica do carrinho (passa a tupla completa)
-                self.cart_manager.add_item(result)
+            # 1. Tenta Busca Exata (código ou nome)
+            product_data = self._find_product_by_exact_match(search_text)
+            
+            if not product_data:
+                # 2. Se não for exato, tenta Buscas Parcial (pega o primeiro resultado)
+                query_name = f"%{search_text.lower()}%"
+                cursor.execute(
+                    "SELECT codigo, nome, preco, tipo FROM Produtos WHERE LOWER(nome) LIKE ? LIMIT 1",
+                    (query_name,)
+                )
+                product_data = cursor.fetchone()
+
+            if product_data:
+                # --- NOVO: Chamada ao Diálogo de Quantidade ---
+                new_quantity = self._show_quantity_dialog(product_data)
+
+                if new_quantity is not None:
+                    # Adiciona o item com a quantidade confirmada
+                    # NOTA: O CartManager.add_item agora precisa aceitar a quantidade
+                    # Já que o CartManager original só aceita (product_data), vamos ajustar a chamada
+                    # para _add_item_to_cart_manager, que será ligeiramente diferente
+                    
+                    # Para simplificar, vou assumir que CartManager.add_item aceita (product_data, quantidade)
+                    # Se seu CartManager precisar de ajuste, por favor, me avise.
+                    
+                    # Por enquanto, vamos manter o add_item simples e lidar com a lógica de QUANTIDADE
+                    # O CartManager original, que você me passou, só adicionava 1. Vamos simular a adição:
+                    
+                    # 1. Remova o item do carrinho se ele já existir (para garantir que a alteração seja feita)
+                    # Se o produto já estiver no carrinho, vamos apenas atualizar a quantidade total dele.
+                    
+                    # Melhor abordagem: Adicione o item, e o CartManager irá somar ou substituir.
+                    # Mas como o _show_quantity_dialog é chamado APÓS a busca, vamos garantir que ele seja adicionado corretamente.
+
+                    # Para funcionar perfeitamente, precisamos que `CartManager` saiba lidar com a adição de uma quantidade específica.
+                    # Já que eu não tenho o `CartManager`, vou criar uma versão auxiliar para adicionar a quantidade correta.
+
+                    codigo = product_data[0]
+                    nome = product_data[1]
+                    preco = product_data[2]
+                    tipo = product_data[3]
+
+                    # A lógica aqui é limpar o campo de busca ANTES de atualizar o carrinho
+                    self.search_input.clear()
+                    
+                    # Adiciona o item (o CartManager deve suportar este formato, mesmo que seja para adicionar a quantidade inicial)
+                    self.cart_manager.add_item(
+                        (codigo, nome, preco, tipo), 
+                        quantity=new_quantity # Passando a nova quantidade
+                    )
+                    
+                    total = self.cart_manager.calculate_total()
+                    self._update_total_display(total)
+                    self._update_cart_table() 
                 
-                # Atualiza a interface
-                total = self.cart_manager.calculate_total()
-                self._update_total_display(total)
-                self._update_cart_table() 
+                # Se new_quantity for None, o usuário cancelou, e nada acontece
                 
             else:
-                QMessageBox.critical(self, "Erro", f"Produto com código '{code}' não encontrado.")
+                QMessageBox.critical(self, "Erro", f"Produto com código/nome '{search_text}' não encontrado.")
 
-        self.search_input.clear()
         self.search_input.setFocus()
 
     def _handle_remove_item(self):
-        """Lê o código de busca e delega a remoção ao CartManager."""
+        """Lê o código de busca e delega a remoção ao CartManager (F4)."""
         code = self.search_input.text().strip()
         if not code:
             QMessageBox.warning(self, "Aviso", "Por favor, digite o código do produto para remover.")
@@ -117,7 +211,7 @@ class PDVWindow(QMainWindow):
         self.search_input.setFocus()
         
     def _handle_finalize_sale(self):
-        """Finaliza a venda, valida valores e limpa o carrinho."""
+        """Finaliza a venda, valida valores e limpa o carrinho (F12)."""
         
         total = self.cart_manager.calculate_total()
         
@@ -135,13 +229,15 @@ class PDVWindow(QMainWindow):
         troco = received - total
 
         if troco < 0:
-            QMessageBox.critical(self, "Valor Insuficiente", f"Faltam R$ {abs(troco):.2f}. Valor recebido é menor que o total.")
+            QMessageBox.critical(self, "Valor Insuficiente", f"Faltam R$ {abs(troco):.2f}".replace('.', '#').replace(',', '.').replace('#', ',') + ". Valor recebido é menor que o total.")
             return
 
+        # -------------------------------------------------------------
+        # NOTE: AQUI DEVE ENTRAR A FUNÇÃO DE PERSISTÊNCIA DA VENDA
+        # -------------------------------------------------------------
+        
         formatted_troco = f"R$ {troco:,.2f}".replace('.', '#').replace(',', '.').replace('#', ',')
         QMessageBox.information(self, "Venda Concluída", f"Troco: {formatted_troco}")
-        
-        # NOTE: AQUI DEVERIA IR A FUNÇÃO DE PERSISTÊNCIA DA VENDA NA TABELA 'VENDAS'
         
         # Limpa o carrinho e a interface
         self.cart_manager.clear_cart()
@@ -181,7 +277,7 @@ class PDVWindow(QMainWindow):
         elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
             
             if self.search_input.hasFocus():
-                self._handle_add_item()
+                self._handle_add_item() # Enter chama a função de adição/busca
             
             elif self.received_input.hasFocus() and self.cart_manager.calculate_total() > 0:
                 self._handle_finalize_sale()
@@ -212,8 +308,11 @@ class PDVWindow(QMainWindow):
         search_layout = QHBoxLayout()
         search_label = QLabel("Código/Busca:")
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Digite o código (Ex: A001) e pressione Enter")
+        self.search_input.setPlaceholderText("Digite o código ou nome do produto. Use Enter para adicionar.")
         self.search_input.setFont(QFont("Arial", 14))
+        
+        # Configura o Auto-Completar (Lista de Sugestões que *começam* com o texto)
+        self._setup_autocompleter()
         
         add_button = QPushButton("Adicionar (Enter)")
         add_button.setStyleSheet("background-color: #2196F3; color: white; padding: 10px;")
@@ -285,3 +384,42 @@ class PDVWindow(QMainWindow):
 
         self.setCentralWidget(central_widget)
         self.search_input.setFocus()
+    
+    # ui/main_window.py (Novo método na classe PDVWindow)
+
+    # ui/main_window.py (Modificação no método _show_quantity_dialog)
+
+    # ui/main_window.py (dentro de def _show_quantity_dialog(self):)
+
+    def _show_quantity_dialog(self, product_data):
+        """
+        Abre um diálogo para confirmar e alterar a quantidade/peso do produto.
+        Retorna a nova quantidade (float), ou None se cancelado.
+        """
+        nome_produto = product_data[1] # Nome do produto
+        
+        # ⚠️ CORREÇÃO AQUI: Garante que tipo_produto não é None e padroniza para 'Unidade' se for
+        tipo_produto = product_data[3] if product_data[3] is not None else 'Unidade' 
+        
+        # Se for 'Peso', continua a lógica de double; caso contrário, usa int (para 'Unidade' ou qualquer outro valor)
+        if tipo_produto.lower() == 'peso': 
+            label = f"Digite o PESO para {nome_produto} (Kg):"
+            initial_value = 1.000
+            # ... (resto do código para getDouble) ...
+            new_quantity, ok = QInputDialog.getDouble(
+                self, "Confirmar Peso/Quantidade", label, 
+                value=initial_value, decimals=3 
+            )
+        else:
+            # ... (resto do código para getInt) ...
+            label = f"Digite a QUANTIDADE para {nome_produto}:"
+            initial_value = 1
+            new_quantity, ok = QInputDialog.getInt(
+                self, "Confirmar Quantidade", label, 
+                value=initial_value
+            )
+
+        if ok:
+            return new_quantity
+        
+        return None

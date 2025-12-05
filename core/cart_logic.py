@@ -1,19 +1,20 @@
-# core/cart_logic.py
-
 class CartManager:
     """Gerencia a lista de itens no carrinho, os cálculos de total e a manipulação (adição/remoção)."""
     
     def __init__(self):
         self.cart_items = []
 
-    def add_item(self, product_data: tuple):
-        """Adiciona ou incrementa um item no carrinho. Recebe a tupla do BD (codigo, nome, preco, tipo)."""
-        codigo, nome, preco, tipo = product_data[:4] # Garante que pegue os 4, mesmo que 'tipo' não seja usado aqui
+    # ALTERAÇÃO PRINCIPAL: Adicionado o parâmetro 'quantity' (padrão 1.0)
+    def add_item(self, product_data: tuple, quantity: float = 1.0):
+        """Adiciona ou incrementa um item no carrinho com a quantidade especificada."""
+        # Garantimos que 'tipo' (product_data[3]) seja lido para uso futuro, se necessário
+        codigo, nome, preco, tipo = product_data[:4] 
         
         found_in_cart = False
         for item in self.cart_items:
             if item['codigo'] == codigo:
-                item['quantidade'] += 1
+                # ALTERAÇÃO: SOMA a quantidade recebida (do diálogo ou 1.0) à existente
+                item['quantidade'] += quantity
                 found_in_cart = True
                 break
         
@@ -22,7 +23,8 @@ class CartManager:
                 'codigo': codigo, 
                 'nome': nome, 
                 'preco': preco, 
-                'quantidade': 1
+                'quantidade': quantity, # Usa a quantidade especificada
+                'tipo': tipo # Armazena o tipo para futuras lógicas (ex: interface)
             })
             
     def remove_item(self, codigo: str):
@@ -33,6 +35,7 @@ class CartManager:
             if item['codigo'] == codigo:
                 item_found = True
                 
+                # Para manter a lógica original: diminui 1 ou remove
                 if item['quantidade'] > 1:
                     item['quantidade'] -= 1  
                     print(f"LOG: Item removido: {item['nome']}. Nova quantidade: {item['quantidade']}")
