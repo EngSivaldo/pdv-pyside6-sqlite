@@ -23,7 +23,7 @@ from ui.product_list import ProductListWindow
 from ui.checkout_dialog import CheckoutDialog
 from .cadastro_funcionario_dialog import CadastroFuncionarioDialog 
 from .gerenciar_funcionarios_dialog import GerenciarFuncionariosDialog
-
+from ui.gerenciar_produtos_dialog import GerenciarProdutosDialog
 
 # ----------------------------------------------------
 # --- FUNÇÕES DE NORMALIZAÇÃO PARA BUSCA (PDV) ---
@@ -88,6 +88,15 @@ class PDVWindow(QMainWindow):
         dialog = CadastroFuncionarioDialog(
             db_connection=self.db_connection, 
             employee_id=None, 
+            parent=self
+        )
+        dialog.exec()
+    
+    def _show_product_management(self):
+        """Abre o diálogo de gerenciamento de produtos."""
+        # Instancia o diálogo, passando a conexão ativa com o banco de dados
+        dialog = GerenciarProdutosDialog(
+            db_connection=self.db_connection, 
             parent=self
         )
         dialog.exec()
@@ -187,9 +196,6 @@ class PDVWindow(QMainWindow):
         
         self.cart_table.scrollToBottom()
 
-    # Dentro de ui/main_window.py
-
-    # Em ui/main_window.py
 
     def _setup_autocompleter(self):
         """Busca todos os nomes/códigos de produtos e configura o QCompleter no campo de busca."""
@@ -620,6 +626,17 @@ class PDVWindow(QMainWindow):
         register_button.setStyleSheet("background-color: #607D8B; color: white; padding: 10px; border-radius: 5px;")
         register_button.clicked.connect(self._handle_open_registration)
         checkout_layout.addWidget(register_button)
+        
+        # 1. Crie o botão para gerenciar produtos
+        self.manage_products_button = QPushButton("📦 Gerenciar Produtos")
+        
+        # 2. Conecte o sinal 'clicked' ao método que abre o diálogo
+        self.manage_products_button.clicked.connect(self._show_product_management)
+        # ⬅️ INSERIR AQUI
+        checkout_layout.addWidget(self.manage_products_button)
+        # ➡️ FIM DA INSERÇÃO
+        self.register_employee_button = QPushButton("👨‍💼 Cadastrar Funcionário")
+    
         
         # ⭐️ NOVO BOTÃO: Cadastrar Funcionário ⭐️
         self.register_employee_button = QPushButton("👨‍💼 Cadastrar Funcionário")

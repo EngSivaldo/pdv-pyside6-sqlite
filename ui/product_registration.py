@@ -1,5 +1,3 @@
-# ui/product_registration.py - CORRIGIDO PARA 5 COLUNAS
-
 import sqlite3
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
@@ -19,17 +17,26 @@ CATEGORY_PREFIXES = {
 }
 
 class ProductRegistrationWindow(QDialog):
-    def __init__(self, db_connection):
-        super().__init__()
+    
+    def __init__(self, db_connection, product_id=None, parent=None): 
+        super().__init__(parent) 
         self.setWindowTitle("Cadastro de Produtos")
         self.setGeometry(200, 200, 450, 350) 
         self.db_connection = db_connection
+        self.product_id = product_id 
         
         self._setup_ui()
         
+        # Geração de Código e Conexão
         self._generate_next_code() 
-        # Garante que o código seja gerado ao mudar a Categoria
         self.category_input.currentTextChanged.connect(self._generate_next_code) 
+        
+        # Lógica de Edição: Carrega os dados se o ID estiver presente
+        if self.product_id is not None:
+            self._load_product_data()
+            self.setWindowTitle("Editar Produto")
+            # Ao editar, o código não deve ser gerado ou alterado novamente
+            self.code_input.setReadOnly(True)
 
     def _setup_ui(self):
         """Configura os campos e botões de cadastro."""
@@ -71,7 +78,7 @@ class ProductRegistrationWindow(QDialog):
         # --- Campo: Categoria (Valor que vai para a coluna 'categoria') ---
         category_layout = QHBoxLayout()
         category_layout.addWidget(QLabel("Categoria:"))
-        self.category_input = QComboBox() # ⭐️ RENOMEADO de type_input para category_input
+        self.category_input = QComboBox() 
         self.category_input.setFont(input_font)
         
         self.category_input.addItems(list(CATEGORY_PREFIXES.keys()))
@@ -97,7 +104,7 @@ class ProductRegistrationWindow(QDialog):
         save_button = QPushButton("💾 Salvar Produto")
         save_button.setFont(QFont("Arial", 12, QFont.Bold))
         save_button.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px;")
-        save_button.clicked.connect(self._save_product)
+        save_button.clicked.connect(self._handle_save_product) # ⬅️ CORREÇÃO CRÍTICA: Conectado ao dispatcher
         button_layout.addWidget(save_button)
         
         cancel_button = QPushButton("Cancelar")
@@ -109,7 +116,6 @@ class ProductRegistrationWindow(QDialog):
 
     def _generate_next_code(self):
         """Gera o próximo código sequencial baseado na categoria selecionada."""
-        # ⭐️ Usando o novo nome do input para obter a categoria
         selected_category = self.category_input.currentText() 
         prefix = CATEGORY_PREFIXES.get(selected_category, "X")
         
@@ -117,8 +123,6 @@ class ProductRegistrationWindow(QDialog):
 
         try:
             cursor = self.db_connection.cursor()
-            
-            # Busca o código alfanumérico mais alto para o prefixo
             cursor.execute("""
                 SELECT codigo FROM Produtos 
                 WHERE codigo LIKE ? 
@@ -132,14 +136,12 @@ class ProductRegistrationWindow(QDialog):
             if last_code:
                 last_code_str = last_code[0]
                 try:
-                    # Tenta extrair a parte numérica após o prefixo (ex: 'A' de 'A001')
                     number_part = last_code_str[len(prefix):]
                     last_number = int(number_part)
                     next_number = last_number + 1
                 except ValueError:
                     next_number = 1
             
-            # Formata o código: Prefixo + Número (com 3 dígitos, ex: A001)
             new_code = f"{prefix}{next_number:03d}" 
             self.code_input.setText(new_code)
 
@@ -147,42 +149,129 @@ class ProductRegistrationWindow(QDialog):
             QMessageBox.critical(self, "Erro de BD", f"Erro ao gerar código: {e}")
             self.code_input.setText("ERRO")
 
-    def _save_product(self):
-        """Coleta os dados, valida e insere nas 5 colunas do banco de dados."""
+    # --- NOVO/CORRIGIDO: Apenas executa a INSERT, usando os argumentos passados ---
+    def _insert_product(self, codigo, nome, preco, tipo_medicao, categoria):
+        """Executa a query INSERT. Retorna True/False."""
+        if not self.db_connection: return False
+        
+        try:
+            cursor = self.db_connection.cursor()
+            cursor.execute(
+                "INSERT INTO Produtos (codigo, nome, preco, tipo_medicao, categoria) VALUES (?, ?, ?, ?, ?)",
+                (codigo, nome, preco, tipo_medicao, categoria) 
+            )
+            self.db_connection.commit()
+            return True
+            
+        except sqlite3.IntegrityError:
+            QMessageBox.critical(self, "Erro de BD", f"O código '{codigo}' já existe no sistema. Use um código único.")
+            return False
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Erro de BD", f"Erro ao inserir produto: {e}")
+            return False
+
+    def _load_product_data(self):
+        """
+        Carrega os dados do produto usando self.product_id e preenche os campos do formulário.
+        """
+        self.code_input.setText(self.product_id) # ⬅️ PREENCHE O CÓDIGO AQUI
+        try:
+            cursor = self.db_connection.cursor()
+            query = "SELECT nome, preco, tipo_medicao, categoria FROM Produtos WHERE codigo = ?"
+            cursor.execute(query, (self.product_id,))
+            
+            data = cursor.fetchone()
+            
+            if data:
+                nome, preco, tipo_medicao, categoria = data 
+                
+                self.name_input.setText(nome)
+                self.price_input.setValue(preco) 
+                
+                # ⬅️ CORREÇÃO: Usando o nome correto do widget
+                self.sale_type_input.setCurrentText(tipo_medicao) 
+                self.category_input.setCurrentText(categoria)
+
+                self.setWindowTitle(f"Editar Produto: {nome}")
+            else:
+                QMessageBox.critical(self, "Erro de Edição", "Produto selecionado não foi encontrado.")
+                self.reject() 
+
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "Erro DB", f"Falha ao carregar dados do produto: {e}")
+            
+    # --- NOVO/CORRIGIDO: O Dispatcher gerencia a coleta, validação e direcionamento ---
+    def _handle_save_product(self):
+        """Coleta dados, decide se deve INSERIR (Cadastro) ou ATUALIZAR (Edição)."""
+        
+        # 1. Coletar dados e Validar
         codigo = self.code_input.text().strip()
         nome = self.name_input.text().strip()
         preco = self.price_input.value()
-        
-        # ⭐️ COLETANDO OS DOIS NOVOS VALORES
-        tipo_medicao = self.sale_type_input.currentText() # Valor para tipo_medicao (Unidade/Peso)
-        categoria = self.category_input.currentText()      # Valor para categoria (Alimentos, Bebidas, etc.)
+        tipo_medicao = self.sale_type_input.currentText()
+        categoria = self.category_input.currentText()
         
         if not codigo or not nome or preco <= 0:
             QMessageBox.warning(self, "Erro de Validação", "Código, Nome e Preço são obrigatórios.")
             return
 
-        if self.db_connection:
-            try:
-                cursor = self.db_connection.cursor()
-                
-                # ⭐️ CORREÇÃO CRÍTICA: A query agora insere nas 5 colunas
-                cursor.execute(
-                    "INSERT INTO Produtos (codigo, nome, preco, tipo_medicao, categoria) VALUES (?, ?, ?, ?, ?)",
-                    (codigo, nome, preco, tipo_medicao, categoria) 
-                )
-                self.db_connection.commit()
-                
-                QMessageBox.information(self, "Sucesso", f"Produto '{nome}' (Categoria: {categoria}, Medida: {tipo_medicao}) cadastrado com sucesso! Código: {codigo}")
-                
-                # Limpa e gera o código para o próximo produto
+        # 2. Direcionar para INSERT ou UPDATE
+        if self.product_id is not None:
+            # ⬅️ MODO EDIÇÃO (UPDATE)
+            success = self._update_product(nome, preco, tipo_medicao, categoria)
+            title = "Edição"
+        else:
+            # ➡️ MODO CADASTRO (INSERT)
+            # ⬅️ CORREÇÃO: Passando o 'codigo' PK para a inserção
+            success = self._insert_product(codigo, nome, preco, tipo_medicao, categoria) 
+            title = "Cadastro"
+            
+        # 3. Status e Fechamento
+        if success:
+            QMessageBox.information(self, title, f"Produto salvo com sucesso! Código: {codigo}")
+            
+            # Limpa o formulário ou fecha o diálogo.
+            if self.product_id is None:
+                # Se for cadastro, limpa e gera novo código.
                 self.name_input.clear()
                 self.price_input.setValue(0.01)
                 self._generate_next_code()
-                
-                self.name_input.setFocus()
-                
-            except sqlite3.IntegrityError:
-                QMessageBox.critical(self, "Erro de BD", f"O código '{codigo}' já existe no sistema. Use um código único.")
-            except sqlite3.Error as e:
-                # O erro de coluna 'tipo' não deve mais ocorrer!
-                QMessageBox.critical(self, "Erro de BD", f"Erro ao inserir produto: {e}")
+            else:
+                # Se for edição, fecha a janela.
+                self.accept()
+        else:
+            # Em caso de falha (exceto IntegrityError, que já trata o QBox dentro do helper)
+            if title == "Edição": 
+                 QMessageBox.critical(self, title, f"Erro ao salvar o produto.")
+            # self.reject() - Manter o diálogo aberto para correção
+
+    # --- NOVO/CORRIGIDO: Apenas executa a UPDATE, usando os argumentos passados ---
+    def _update_product(self, nome, preco, tipo_medicao, categoria):
+        """
+        Executa a query parametrizada UPDATE na tabela Produtos.
+        Retorna True em caso de sucesso, False em caso de falha.
+        """
+        if self.product_id is None:
+            QMessageBox.critical(self, "Erro Fatal", "ID do produto ausente para operação UPDATE.")
+            return False
+
+        query = """
+            UPDATE Produtos 
+            SET nome = ?, preco = ?, tipo_medicao = ?, categoria = ? 
+            WHERE codigo = ?
+        """
+        # Note que self.product_id é o código PK na edição
+        params = (nome, preco, tipo_medicao, categoria, self.product_id)
+        
+        if not self.db_connection: return False
+
+        try:
+            cursor = self.db_connection.cursor()
+            cursor.execute(query, params)
+            self.db_connection.commit()
+            return True
+        
+        except sqlite3.Error as e:
+            self.db_connection.rollback()
+            QMessageBox.critical(self, "Erro de Edição DB", f"Falha na atualização do produto: {e}")
+            return False
