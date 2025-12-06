@@ -369,6 +369,8 @@ class PDVWindow(QMainWindow):
     # Substitua este método inteiro pelo código abaixo:
     # ui/main_window.py
 
+    # ui/main_window.py (MÉTODO _handle_finalize_sale)
+
     def _handle_finalize_sale(self):
         """Abre o diálogo de Checkout para confirmação de pagamento e registra a venda."""
         
@@ -383,27 +385,31 @@ class PDVWindow(QMainWindow):
         if checkout_dialog.exec() == QDialog.Accepted:
             received = checkout_dialog.valor_recebido
             troco = checkout_dialog.troco
+            
+            # ⭐️ OBTENÇÃO CORRETA DOS DADOS ⭐️
             id_funcionario = self.logged_user.get('id')
+            vendedor_nome = self.logged_user.get('nome') # <-- Novo (ou corrigido)
             
-            if not id_funcionario:
-                QMessageBox.critical(self, "Erro", "ID do funcionário logado não encontrado. Venda não registrada.")
+            if not id_funcionario or not vendedor_nome:
+                QMessageBox.critical(self, "Erro", "Dados do funcionário logado incompletos. Venda não registrada.")
                 return
-
+                
             itens_venda = [(
-                item['codigo'], 
-                item['nome'], 
-                item['quantidade'], 
-                item['preco']
-            ) for item in self.cart_manager.cart_items] 
-            
-            # ⭐️ CHAMA A FUNÇÃO e CAPTURA O ID DA VENDA ⭐️
+                         item['codigo'], 
+                        item['nome'], 
+                        item['quantidade'],          
+                        item['preco']
+            ) for item in self.cart_manager.cart_items]
+
+            # ⭐️ CHAMADA CORRIGIDA: ADICIONANDO 'vendedor_nome' ⭐️
             venda_id = finalizar_venda(
                 self.db_connection,
                 itens_venda, 
                 total,
                 received,
                 troco,
-                id_funcionario 
+                id_funcionario,
+                vendedor_nome # ⬅️ ARGUMENTO QUE ESTAVA FALTANDO
             )
             
             if not isinstance(venda_id, int) or venda_id is None: 
@@ -687,17 +693,51 @@ class PDVWindow(QMainWindow):
         dialog = GerenciarFuncionariosDialog(self.db_connection, self)
         dialog.exec()
         
-    # ... (Outros métodos como _show_employee_management, etc.)
+  # ui/main_window.py (dentro da classe PDVWindow)
+
+# ... (após _show_employee_management ou similar)
+
+    def _handle_open_registration(self):
+        """Abre a janela de cadastro de produtos."""
+        # Note: Você precisará garantir que 'ProductRegistrationWindow' está importado!
+        from ui.product_registration import ProductRegistrationWindow
+        self.registration_window = ProductRegistrationWindow(self.db_connection)
+        self.registration_window.exec()
+
+    def _handle_open_product_list(self):
+        """Abre a janela de consulta e listagem de produtos."""
+        # Note: Você precisará garantir que 'ProductListWindow' está importado!
+        from ui.product_list import ProductListWindow
+        self.list_window = ProductListWindow(self.db_connection)
+        self.list_window.exec()
+    
+# ... (antes de _setup_ui)
 
     def _show_sales_reports(self):
-        """
-        Abre o diálogo de relatórios de vendas.
-        """
-        # Abertura do novo diálogo de relatórios
-        dialog = RelatoriosVendasDialog(self.db_connection, self)
+    
+        vendedor_logado_nome = self.logged_user.get('nome')
+        is_admin = self.logged_user.get('cargo') == 'admin'
+
+        if is_admin:
+            # 1. Administrador: Passa None para ver tudo
+            filtro_vendedor = None 
+        else:
+            # 2. Vendedor Comum: Passa o nome para filtrar
+            filtro_vendedor = vendedor_logado_nome
+            
+            # ⭐️ AJUSTE CRÍTICO AQUI:
+            # Garanta que o nome existe antes de prosseguir
+            if not filtro_vendedor:
+                QMessageBox.critical(self, "Erro", "Nome do funcionário logado não encontrado. Relatório indisponível.")
+                return
+
+        dialog = RelatoriosVendasDialog(
+            self.db_connection, 
+            # Passa o filtro, que será None (Admin) ou o nome (Vendedor)
+            vendedor_logado=filtro_vendedor, 
+            parent=self
+        )
         dialog.exec()
-        
-    # ui/main_window.py
 
     def _show_print_dialog(self, venda_id, total, recebido, troco, itens_venda):
         """
@@ -764,3 +804,21 @@ class PDVWindow(QMainWindow):
         """
 
         QMessageBox.information(self, "Impressão (Simulada)", f"Recibo gerado com sucesso. O texto abaixo seria enviado para a impressora:\n\n{recibo_texto}")
+        
+# No seu MainWindow ou onde você chama o relatório:
+
+    def open_sales_report(self):
+        # Supondo que 'self.logged_in_user_name' contém o nome do vendedor
+        # E que 'self.is_admin' verifica o cargo/permissão
+        
+        if self.is_admin:
+            vendedor_filtro = None # Administrador vê todas as vendas
+        else:
+            vendedor_filtro = self.logged_in_user_name # Vendedor vê apenas as suas
+            
+        dialog = RelatoriosVendasDialog(
+            db_connection=self.db_connection,
+            vendedor_logado=vendedor_filtro, # ⭐️ Novo argumento ⭐️
+            parent=self
+        )
+        dialog.exec()

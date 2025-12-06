@@ -9,7 +9,7 @@ from PySide6.QtSql import QSqlTableModel, QSqlDatabase
 from PySide6.QtCore import Qt
 # Importar o diálogo de cadastro de produto (assumindo que o arquivo existe)
 from ui.product_registration import ProductRegistrationWindow 
-
+from ui.adjust_stock_dialog import AdjustStockDialog
 class GerenciarProdutosDialog(QDialog):
     """Diálogo para listar, editar e excluir produtos."""
 
@@ -34,6 +34,11 @@ class GerenciarProdutosDialog(QDialog):
         # 2. Botões de Ação
         button_layout = QHBoxLayout()
         
+        # ⭐️ NOVO BOTÃO DE AJUSTE DE ESTOQUE ⭐️
+        self.adjust_stock_button = QPushButton("➕ Ajustar Estoque Rápido")
+        self.adjust_stock_button.setStyleSheet("background-color: #007BFF; color: white;")
+        self.adjust_stock_button.clicked.connect(self.adjust_stock)
+        
         self.edit_button = QPushButton("✏️ Editar Selecionado")
         self.edit_button.setStyleSheet("background-color: #FFA000; color: white;")
         self.edit_button.clicked.connect(self.edit_product)
@@ -41,6 +46,9 @@ class GerenciarProdutosDialog(QDialog):
         self.delete_button = QPushButton("❌ Excluir Selecionado")
         self.delete_button.setStyleSheet("background-color: #D32F2F; color: white;")
         self.delete_button.clicked.connect(self.delete_product)
+        
+        # ⬇️ CORREÇÃO: ADICIONANDO O BOTÃO AO LAYOUT AQUI ⬇️
+        button_layout.addWidget(self.adjust_stock_button) 
         
         button_layout.addStretch(1)
         button_layout.addWidget(self.edit_button)
@@ -144,3 +152,65 @@ class GerenciarProdutosDialog(QDialog):
             
             # 5. Recarregar a lista
             self.load_products()
+            
+    
+    def adjust_stock(self):
+        """Abre o diálogo de ajuste rápido para o produto selecionado e aplica a mudança."""
+        
+        selected_rows = self.table_view.selectionModel().selectedRows()
+        
+        if not selected_rows:
+            QMessageBox.warning(self, "Aviso", "Selecione um produto para ajustar o estoque.")
+            return
+
+        selected_row = selected_rows[0].row()
+        
+        # Índices: 0=codigo, 1=nome, 3=quantidade (Estoque)
+        code_index = self.model.index(selected_row, 0)
+        name_index = self.model.index(selected_row, 1)
+        qty_index = self.model.index(selected_row, 3) # ⬅️ Índice da Quantidade
+        
+        product_code = self.model.data(code_index)
+        product_name = self.model.data(name_index)
+        current_qty_raw = self.model.data(qty_index)
+        # ⭐️ CORREÇÃO CRÍTICA: Converta o dado para float antes de usar ou passar ⭐️
+        try:
+            current_qty = float(current_qty_raw)
+        except (ValueError, TypeError):
+            # Se a conversão falhar (e.g., o campo estiver vazio ou for "None"), assuma 0.0
+            current_qty = 0.0
+            
+        # 1. Abrir o Diálogo de Ajuste
+        dialog = AdjustStockDialog(product_name, current_qty, self) # Agora 'current_qty' é float
+        
+        # 1. Abrir o Diálogo de Ajuste
+        dialog = AdjustStockDialog(product_name, current_qty, self)
+        
+        if dialog.exec() == QDialog.Accepted:
+            adjustment = dialog.get_adjustment()
+            
+            if adjustment != 0:
+                # 2. Chamar função do DB para aplicar o ajuste
+                success = self._apply_stock_adjustment(product_code, adjustment)
+                
+                if success:
+                    QMessageBox.information(self, "Sucesso", f"Estoque de '{product_name}' ajustado em {adjustment:+.2f}.")
+                    self.load_products() # Recarrega a tabela para mostrar o novo valor
+                else:
+                    QMessageBox.critical(self, "Erro DB", "Falha ao atualizar o estoque no banco de dados.")
+
+    def _apply_stock_adjustment(self, product_code, adjustment):
+        """Função interna para aplicar o ajuste de estoque no banco de dados."""
+        if not self.db_connection: return False
+        
+        try:
+            cursor = self.db_connection.cursor()
+            # Adiciona o ajuste ao valor atual do estoque
+            query = "UPDATE Produtos SET quantidade = quantidade + ? WHERE codigo = ?"
+            cursor.execute(query, (adjustment, product_code))
+            self.db_connection.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"Erro ao aplicar ajuste de estoque: {e}")
+            self.db_connection.rollback()
+            return False

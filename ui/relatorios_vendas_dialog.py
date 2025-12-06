@@ -1,5 +1,3 @@
-# ui/relatorios_vendas_dialog.py - CORRIGIDO COM FILTROS DE DATA E SCHEMA
-
 import sqlite3
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QTableView, QHeaderView, QMessageBox, 
@@ -10,12 +8,15 @@ from PySide6.QtCore import Qt, QModelIndex, QDate
 from PySide6.QtGui import QFont
 
 class RelatoriosVendasDialog(QDialog):
-    """Diálogo para exibir o histórico de vendas e seus detalhes, com filtros de data."""
+    """Diálogo para exibir o histórico de vendas e seus detalhes, com filtros de data e vendedor."""
 
-    def __init__(self, db_connection, parent=None):
+    # ⭐️ NOVO PARÂMETRO: vendedor_logado ⭐️
+    def __init__(self, db_connection, vendedor_logado=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Histórico e Relatórios de Vendas")
         self.db_connection = db_connection
+        # self.vendedor_logado será o nome do vendedor (str) ou None (se for admin)
+        self.vendedor_logado = vendedor_logado 
         self.resize(1100, 700)
         
         self.setup_db_connection()
@@ -23,16 +24,19 @@ class RelatoriosVendasDialog(QDialog):
         self.load_sales_history() # Carrega o histórico inicial
         
     def setup_db_connection(self):
-        """Configura a ponte de conexão Qt (QSqlDatabase)."""
+        """Configura a conexão QtSql separada para uso com QSqlQueryModel."""
         try:
+            # Obtém o caminho do arquivo do SQLite a partir da conexão padrão
             cursor = self.db_connection.cursor()
-            cursor.execute("PRAGMA database_list")
+            # Esta PRAGMA retorna o caminho do arquivo para a primeira (main) database
+            cursor.execute("PRAGMA database_list") 
             db_path = cursor.fetchone()[2] 
         except Exception as e:
             QMessageBox.critical(self, "Erro DB", f"Não foi possível obter o caminho do DB: {e}")
             self.reject()
             return
         
+        # Cria uma conexão única para o modelo de relatório
         connection_name = "sales_history_conn"
         
         if QSqlDatabase.contains(connection_name):
@@ -45,11 +49,16 @@ class RelatoriosVendasDialog(QDialog):
             QMessageBox.critical(self, "Erro de Conexão DB", 
                                  f"Não foi possível abrir a conexão Qt: {self.qt_db.lastError().text()}")
             self.reject()
-                
+            
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
         input_font = QFont("Arial", 11)
 
+        # ⭐️ AJUSTE: Rótulo de Cabeçalho indicando o filtro ⭐️
+        header_text = "Histórico de Transações:"
+        if self.vendedor_logado:
+            header_text = f"Histórico de Transações (Vendedor: {self.vendedor_logado}):"
+            
         # --- 1. Filtro de Data e Ações ---
         filter_layout = QHBoxLayout()
         
@@ -90,7 +99,7 @@ class RelatoriosVendasDialog(QDialog):
         main_layout.addLayout(totals_layout)
         
         # --- 3. Tabela de Histórico de Vendas ---
-        main_layout.addWidget(QLabel("Histórico de Transações:"))
+        main_layout.addWidget(QLabel(header_text)) # Usa o novo rótulo
         self.sales_table_view = QTableView()
         self.sales_table_view.setSelectionBehavior(QTableView.SelectRows)
         self.sales_table_view.setSelectionMode(QTableView.SingleSelection)
@@ -106,7 +115,7 @@ class RelatoriosVendasDialog(QDialog):
         main_layout.addWidget(self.details_table_view)
         
     def load_sales_history(self):
-        """Carrega o histórico de vendas para a tabela principal, aplicando o filtro de datas."""
+        """Carrega o histórico de vendas para a tabela principal, aplicando filtro de datas E de vendedor (se não for admin)."""
         
         if not self.qt_db.isOpen():
             QMessageBox.critical(self, "Erro DB", "Conexão Qt DB não está aberta.")
@@ -118,10 +127,8 @@ class RelatoriosVendasDialog(QDialog):
         
         self.model = QSqlQueryModel(self)
         
-        # 2. Query com o filtro WHERE
-        # CORREÇÃO AQUI: JOIN V.id_funcionario (FK) com F.id (PK)
-        query = QSqlQuery(self.qt_db)
-        query.prepare("""
+        # Base da Query
+        base_query = """
         SELECT 
             V.venda_id, 
             V.data_hora, 
@@ -132,11 +139,27 @@ class RelatoriosVendasDialog(QDialog):
         FROM Vendas AS V
         LEFT JOIN Funcionarios AS F ON V.id_funcionario = F.id 
         WHERE V.data_hora BETWEEN :start_date AND :end_date
-        ORDER BY V.data_hora DESC
-        """)
+        """
         
+        # ⭐️ AJUSTE CRÍTICO: FILTRO SEGURO PARA VENDEDOR ⭐️
+        if self.vendedor_logado:
+            # Se self.vendedor_logado tem um valor, significa que não é admin e precisa de filtro.
+            # Adiciona o placeholder nomeado à query
+            base_query += " AND F.nome = :vendedor_nome"
+            
+        # Finaliza a Query
+        base_query += " ORDER BY V.data_hora DESC"
+        
+        query = QSqlQuery(self.qt_db)
+        query.prepare(base_query)
+        
+        # Faz o BIND dos valores de data
         query.bindValue(":start_date", start_date)
         query.bindValue(":end_date", end_date)
+        
+        # Faz o BIND do nome do vendedor, se o filtro estiver ativo
+        if self.vendedor_logado:
+            query.bindValue(":vendedor_nome", self.vendedor_logado)
         
         if not query.exec():
             QMessageBox.critical(self, "Erro de Query", f"Erro ao executar filtro: {query.lastError().text()}")
@@ -144,7 +167,7 @@ class RelatoriosVendasDialog(QDialog):
             
         self.model.setQuery(query)
             
-        # 4. Configuração da Tabela e Cabeçalhos
+        # 4. Configuração da Tabela e Cabeçalhos (inalterada)
         self.model.setHeaderData(0, Qt.Horizontal, "ID Venda")
         self.model.setHeaderData(1, Qt.Horizontal, "Data/Hora")
         self.model.setHeaderData(2, Qt.Horizontal, "Vendedor")
@@ -161,13 +184,13 @@ class RelatoriosVendasDialog(QDialog):
         self._calculate_total_sales()
         
         if self.model.rowCount() == 0:
-             QMessageBox.information(self, "Relatório", "Nenhuma venda encontrada no período selecionado.")
+            QMessageBox.information(self, "Relatório", "Nenhuma venda encontrada no período selecionado.")
 
 
     def _calculate_total_sales(self):
-        """Calcula o total de vendas do conjunto de dados atual."""
+        """Calcula e exibe o total das vendas que estão sendo exibidas na tabela."""
         total_sum = 0.0
-        total_column = 3 
+        total_column = 3 # Coluna 'Total (R$)'
         
         for row in range(self.model.rowCount()):
             index = self.model.index(row, total_column)
@@ -181,11 +204,15 @@ class RelatoriosVendasDialog(QDialog):
         self.total_sales_label.setText(f"Total de Vendas Exibidas: R$ {total_sum:.2f}")
 
     def show_sale_details(self, index: QModelIndex):
-        """Busca e exibe os itens da venda selecionada."""
+        """Carrega os itens da venda selecionada na tabela de detalhes."""
+        # Garante que o details_model exista
+        if not hasattr(self, 'details_model'):
+            self.details_model = QSqlQueryModel(self)
+            
         if not index.isValid():
             # Limpa os detalhes se nada estiver selecionado
-            self.details_model.clear()
-            self.details_model.setQuery("")
+            # Cria um QSqlQueryModel vazio para limpar o view
+            self.details_table_view.setModel(QSqlQueryModel(self)) 
             return
 
         # 1. Obtém o 'venda_id' da linha selecionada (coluna 0)
@@ -220,6 +247,7 @@ class RelatoriosVendasDialog(QDialog):
         self.details_model.setHeaderData(3, Qt.Horizontal, "Subtotal (R$)")
 
         # Ajusta a largura das colunas
+        self.details_table_view.setModel(self.details_model)
         self.details_table_view.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.details_table_view.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.details_table_view.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
