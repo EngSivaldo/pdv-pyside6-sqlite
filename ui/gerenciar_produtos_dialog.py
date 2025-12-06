@@ -1,5 +1,4 @@
 # ui/gerenciar_produtos_dialog.py (CÓDIGO CORRIGIDO)
-
 import os
 import sqlite3
 from PySide6.QtWidgets import (
@@ -7,16 +6,20 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtSql import QSqlTableModel, QSqlDatabase
 from PySide6.QtCore import Qt
-# Importar o diálogo de cadastro de produto (assumindo que o arquivo existe)
 from ui.product_registration import ProductRegistrationWindow 
 from ui.adjust_stock_dialog import AdjustStockDialog
-class GerenciarProdutosDialog(QDialog):
-    """Diálogo para listar, editar e excluir produtos."""
 
-    def __init__(self, db_connection: sqlite3.Connection, parent=None):
+class GerenciarProdutosDialog(QDialog):
+    """Diálogo para listar, editar e excluir produtos, com restrição de acesso."""
+
+    # ⭐️ MUDANÇA 1: Adicionar logged_user no __init__ ⭐️
+    def __init__(self, db_connection: sqlite3.Connection, logged_user: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Gerenciamento de Produtos")
         self.db_connection = db_connection
+        self.logged_user = logged_user # Armazena o usuário logado
+        self.is_admin = self.logged_user.get('cargo') == 'admin' # Verifica o cargo
+        
         self.resize(800, 500)
         
         self.setup_ui()
@@ -34,7 +37,7 @@ class GerenciarProdutosDialog(QDialog):
         # 2. Botões de Ação
         button_layout = QHBoxLayout()
         
-        # ⭐️ NOVO BOTÃO DE AJUSTE DE ESTOQUE ⭐️
+        # Cria os botões
         self.adjust_stock_button = QPushButton("➕ Ajustar Estoque Rápido")
         self.adjust_stock_button.setStyleSheet("background-color: #007BFF; color: white;")
         self.adjust_stock_button.clicked.connect(self.adjust_stock)
@@ -47,13 +50,21 @@ class GerenciarProdutosDialog(QDialog):
         self.delete_button.setStyleSheet("background-color: #D32F2F; color: white;")
         self.delete_button.clicked.connect(self.delete_product)
         
-        # ⬇️ CORREÇÃO: ADICIONANDO O BOTÃO AO LAYOUT AQUI ⬇️
-        button_layout.addWidget(self.adjust_stock_button) 
+        # ⭐️ MUDANÇA 2: Restringir a visibilidade dos botões ⭐️
         
-        button_layout.addStretch(1)
-        button_layout.addWidget(self.edit_button)
-        button_layout.addWidget(self.delete_button)
-        button_layout.addStretch(1)
+        if self.is_admin:
+            # Se for admin, adiciona todos os botões de controle
+            button_layout.addWidget(self.adjust_stock_button) 
+            button_layout.addStretch(1)
+            button_layout.addWidget(self.edit_button)
+            button_layout.addWidget(self.delete_button)
+            button_layout.addStretch(1)
+        else:
+            # Se não for admin (vendedor), não adiciona os botões de edição/exclusão
+            # Mas podemos adicionar uma label de aviso, se desejado
+            # label_aviso = QLabel("Visualização: Apenas administradores podem modificar produtos.")
+            # button_layout.addWidget(label_aviso)
+            pass
         
         main_layout.addLayout(button_layout)
         

@@ -1,34 +1,37 @@
+# Importações (Inalteradas)
 import sqlite3
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QTableView, QHeaderView, QMessageBox, 
-    QHBoxLayout, QLabel, QPushButton, QDateEdit
+    QHBoxLayout, QLabel, QPushButton, QDateEdit, 
+    QTableWidget, QTableWidgetItem, QGroupBox, QComboBox 
 )
 from PySide6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
 from PySide6.QtCore import Qt, QModelIndex, QDate
 from PySide6.QtGui import QFont
 
 class RelatoriosVendasDialog(QDialog):
-    """Diálogo para exibir o histórico de vendas e seus detalhes, com filtros de data e vendedor."""
-
-    # ⭐️ NOVO PARÂMETRO: vendedor_logado ⭐️
+    # [__init__ e setup_db_connection inalterados]
+    
     def __init__(self, db_connection, vendedor_logado=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Histórico e Relatórios de Vendas")
         self.db_connection = db_connection
-        # self.vendedor_logado será o nome do vendedor (str) ou None (se for admin)
         self.vendedor_logado = vendedor_logado 
         self.resize(1100, 700)
         
         self.setup_db_connection()
         self.setup_ui()
-        self.load_sales_history() # Carrega o histórico inicial
         
+        if not self.vendedor_logado:
+            self.load_vendors() 
+            
+        self.load_sales_history()
+        self.load_vendor_totals() 
+
     def setup_db_connection(self):
-        """Configura a conexão QtSql separada para uso com QSqlQueryModel."""
+        # [CÓDIGO INALTERADO]
         try:
-            # Obtém o caminho do arquivo do SQLite a partir da conexão padrão
             cursor = self.db_connection.cursor()
-            # Esta PRAGMA retorna o caminho do arquivo para a primeira (main) database
             cursor.execute("PRAGMA database_list") 
             db_path = cursor.fetchone()[2] 
         except Exception as e:
@@ -36,7 +39,6 @@ class RelatoriosVendasDialog(QDialog):
             self.reject()
             return
         
-        # Cria uma conexão única para o modelo de relatório
         connection_name = "sales_history_conn"
         
         if QSqlDatabase.contains(connection_name):
@@ -49,12 +51,11 @@ class RelatoriosVendasDialog(QDialog):
             QMessageBox.critical(self, "Erro de Conexão DB", 
                                  f"Não foi possível abrir a conexão Qt: {self.qt_db.lastError().text()}")
             self.reject()
-            
+
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
         input_font = QFont("Arial", 11)
 
-        # ⭐️ AJUSTE: Rótulo de Cabeçalho indicando o filtro ⭐️
         header_text = "Histórico de Transações:"
         if self.vendedor_logado:
             header_text = f"Histórico de Transações (Vendedor: {self.vendedor_logado}):"
@@ -76,15 +77,26 @@ class RelatoriosVendasDialog(QDialog):
         self.date_end_input.setFont(input_font)
         filter_layout.addWidget(self.date_end_input)
         
+        if not self.vendedor_logado:
+            filter_layout.addWidget(QLabel("Filtrar por Vendedor:"))
+            self.vendor_select = QComboBox()
+            self.vendor_select.setFont(input_font)
+            filter_layout.addWidget(self.vendor_select)
+        
         apply_button = QPushButton("Aplicar Filtro")
         apply_button.setFont(QFont("Arial", 11, QFont.Bold))
+        
         apply_button.clicked.connect(self.load_sales_history)
+        
+        if not self.vendedor_logado:
+             apply_button.clicked.connect(self.load_vendor_totals)
+             
         filter_layout.addWidget(apply_button)
         
         filter_layout.addStretch(1)
         main_layout.addLayout(filter_layout)
 
-        # --- 2. Totais e Fechar ---
+        # --- 2. Total Geral e Botão Fechar ---
         totals_layout = QHBoxLayout()
         self.total_sales_label = QLabel("Total de Vendas Exibidas: R$ 0.00")
         self.total_sales_label.setFont(QFont("Arial", 14, QFont.Bold))
@@ -98,8 +110,29 @@ class RelatoriosVendasDialog(QDialog):
         
         main_layout.addLayout(totals_layout)
         
-        # --- 3. Tabela de Histórico de Vendas ---
-        main_layout.addWidget(QLabel(header_text)) # Usa o novo rótulo
+        # --- 3. TABELA DE SUMÁRIO POR VENDEDOR ---
+        
+        self.totals_group = QGroupBox("📊 Total de Vendas por Vendedor (Período)")
+        self.totals_layout = QVBoxLayout(self.totals_group)
+        
+        self.totals_table = QTableWidget()
+        self.totals_table.setColumnCount(2)
+        self.totals_table.setHorizontalHeaderLabels(["Vendedor", "Total Vendido (R$)"])
+        self.totals_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.totals_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.totals_table.setFixedHeight(120) 
+        
+        # ⭐️ NOVO: CONECTAR O CLIQUE NA CÉLULA (Apenas para Admin) ⭐️
+        if not self.vendedor_logado:
+            self.totals_table.cellClicked.connect(self.filter_by_vendor_from_table)
+            
+        self.totals_layout.addWidget(self.totals_table)
+        
+        if not self.vendedor_logado:
+            main_layout.addWidget(self.totals_group)
+        
+        # --- 4. Tabela de Histórico de Vendas ---
+        main_layout.addWidget(QLabel(header_text)) 
         self.sales_table_view = QTableView()
         self.sales_table_view.setSelectionBehavior(QTableView.SelectRows)
         self.sales_table_view.setSelectionMode(QTableView.SingleSelection)
@@ -107,27 +140,109 @@ class RelatoriosVendasDialog(QDialog):
         self.sales_table_view.clicked.connect(self.show_sale_details) 
         main_layout.addWidget(self.sales_table_view)
 
-        # --- 4. Tabela de Detalhes da Venda Selecionada ---
+        # --- 5. Tabela de Detalhes da Venda Selecionada ---
         main_layout.addWidget(QLabel("Detalhes da Venda Selecionada (Itens):"))
         self.details_table_view = QTableView()
         self.details_table_view.setFixedHeight(180)
         self.details_table_view.setEditTriggers(QTableView.NoEditTriggers)
         main_layout.addWidget(self.details_table_view)
+
+    # ⭐️ NOVO MÉTODO: FILTRAR POR CLIQUE NA TABELA DE TOTAIS ⭐️
+    # ui/relatorios_vendas_dialog.py
+
+    def filter_by_vendor_from_table(self, row, column):
+        """
+        Recebe o clique na tabela de totais (QTableWidget) e
+        atualiza o QComboBox e o histórico de vendas.
+        """
+        if self.vendedor_logado:
+            # Se não for Admin, não deve estar aqui.
+            return
+
+        # 1. Obtém o nome do vendedor na coluna 0 da linha clicada
+        vendor_item = self.totals_table.item(row, 0)
+        if not vendor_item:
+            return
+
+        selected_vendor_name = vendor_item.text()
         
+        # Verifica qual é o filtro atual
+        current_index = self.vendor_select.currentIndex()
+        current_filter_data = self.vendor_select.currentData()
+        
+        # Se o vendedor já estiver selecionado, oferece para limpar o filtro
+        if current_filter_data == selected_vendor_name:
+            
+            # ⭐️ NOVO: Pergunta se deseja limpar o filtro ⭐️
+            reply = QMessageBox.question(self, 
+                                        "Filtro Ativo",
+                                        f"Atualmente, o filtro está em '{selected_vendor_name}'.\n\nDeseja reverter para 'Todos os Vendedores'?",
+                                        QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            
+            if reply == QMessageBox.Yes:
+                # Encontra o índice 'Todos os Vendedores' (que deve ser o índice 0)
+                index_all = self.vendor_select.findData(None) 
+                if index_all != -1:
+                    self.vendor_select.setCurrentIndex(index_all) 
+                    # O currentIndexChanged fará o resto do trabalho (recarregar histórico e totais)
+                return
+            
+            # Se a resposta for Não, simplesmente retorna e não faz nada.
+            return
+
+        # 2. Se o vendedor clicado NÃO estiver selecionado, aplica o filtro:
+        
+        # Encontrar o índice do vendedor no QComboBox
+        index = self.vendor_select.findText(selected_vendor_name)
+        
+        if index != -1:
+            # ⭐️ Atualizar o QComboBox ⭐️
+            # Mudar o índice dispara o sinal currentIndexChanged,
+            # que já está conectado a load_sales_history() e load_vendor_totals()
+            self.vendor_select.setCurrentIndex(index)
+        else:
+            # Isso não deve acontecer após a correção do load_vendors(), mas é um bom fallback
+            QMessageBox.warning(self, "Erro de Filtro", "Vendedor não encontrado na lista de filtros do sistema.")
+
+    # [load_vendors inalterado, pois já dispara o filtro pelo QComboBox]
+    def load_vendors(self):
+        """Carrega todos os funcionários (Admin incluso) para o QComboBox de filtro."""
+        
+        self.vendor_select.clear()
+        self.vendor_select.addItem("Todos os Vendedores", userData=None) 
+        
+        query = QSqlQuery(self.qt_db)
+        
+        # ⭐️ CORREÇÃO APLICADA AQUI ⭐️
+        # Removemos 'WHERE cargo = "vendedor"' para incluir todos os funcionários
+        query.prepare("SELECT nome FROM Funcionarios ORDER BY nome")
+        
+        if not query.exec():
+            QMessageBox.critical(self, "Erro de DB", f"Erro ao carregar vendedores: {query.lastError().text()}")
+            return
+            
+        while query.next():
+            nome = query.value(0)
+            self.vendor_select.addItem(nome, userData=nome)
+            
+        # Conecta a mudança de seleção para recarregar o histórico e totais (Sem alteração)
+        self.vendor_select.currentIndexChanged.connect(self.load_sales_history)
+        self.vendor_select.currentIndexChanged.connect(self.load_vendor_totals)
+            
     def load_sales_history(self):
-        """Carrega o histórico de vendas para a tabela principal, aplicando filtro de datas E de vendedor (se não for admin)."""
-        
+        # [CÓDIGO DE FILTRAGEM INALTERADO]
         if not self.qt_db.isOpen():
             QMessageBox.critical(self, "Erro DB", "Conexão Qt DB não está aberta.")
             return
 
-        # Obter e formatar as datas
         start_date = self.date_start_input.date().toString("yyyy-MM-dd 00:00:00")
         end_date = self.date_end_input.date().toString("yyyy-MM-dd 23:59:59")
         
-        self.model = QSqlQueryModel(self)
+        filtro_vendedor_nome = self.vendedor_logado 
         
-        # Base da Query
+        if not filtro_vendedor_nome and hasattr(self, 'vendor_select'):
+            filtro_vendedor_nome = self.vendor_select.currentData() 
+        
         base_query = """
         SELECT 
             V.venda_id, 
@@ -141,33 +256,28 @@ class RelatoriosVendasDialog(QDialog):
         WHERE V.data_hora BETWEEN :start_date AND :end_date
         """
         
-        # ⭐️ AJUSTE CRÍTICO: FILTRO SEGURO PARA VENDEDOR ⭐️
-        if self.vendedor_logado:
-            # Se self.vendedor_logado tem um valor, significa que não é admin e precisa de filtro.
-            # Adiciona o placeholder nomeado à query
+        query = QSqlQuery(self.qt_db)
+        
+        if filtro_vendedor_nome:
             base_query += " AND F.nome = :vendedor_nome"
             
-        # Finaliza a Query
         base_query += " ORDER BY V.data_hora DESC"
         
-        query = QSqlQuery(self.qt_db)
         query.prepare(base_query)
         
-        # Faz o BIND dos valores de data
         query.bindValue(":start_date", start_date)
         query.bindValue(":end_date", end_date)
         
-        # Faz o BIND do nome do vendedor, se o filtro estiver ativo
-        if self.vendedor_logado:
-            query.bindValue(":vendedor_nome", self.vendedor_logado)
+        if filtro_vendedor_nome:
+            query.bindValue(":vendedor_nome", filtro_vendedor_nome)
         
         if not query.exec():
             QMessageBox.critical(self, "Erro de Query", f"Erro ao executar filtro: {query.lastError().text()}")
             return
             
+        self.model = QSqlQueryModel(self)
         self.model.setQuery(query)
             
-        # 4. Configuração da Tabela e Cabeçalhos (inalterada)
         self.model.setHeaderData(0, Qt.Horizontal, "ID Venda")
         self.model.setHeaderData(1, Qt.Horizontal, "Data/Hora")
         self.model.setHeaderData(2, Qt.Horizontal, "Vendedor")
@@ -186,11 +296,73 @@ class RelatoriosVendasDialog(QDialog):
         if self.model.rowCount() == 0:
             QMessageBox.information(self, "Relatório", "Nenhuma venda encontrada no período selecionado.")
 
+    
+    def load_vendor_totals(self):
+        """Calcula o total de vendas agrupado por vendedor no período e exibe na tabela de sumário."""
+        
+        if self.vendedor_logado or not hasattr(self, 'totals_table'):
+             return
+             
+        start_date = self.date_start_input.date().toString("yyyy-MM-dd 00:00:00")
+        end_date = self.date_end_input.date().toString("yyyy-MM-dd 23:59:59")
+        
+        filtro_vendedor_nome = self.vendor_select.currentData()
+        
+        query_text = """
+            SELECT
+                F.nome AS vendedor_nome,
+                SUM(V.total_venda) AS total_vendido
+            FROM Vendas AS V
+            LEFT JOIN Funcionarios AS F ON V.id_funcionario = F.id 
+            WHERE V.data_hora BETWEEN :start_date AND :end_date
+        """
+        
+        query = QSqlQuery(self.qt_db)
+        
+        if filtro_vendedor_nome:
+            query_text += " AND F.nome = :vendedor_nome"
+
+        query_text += " GROUP BY F.nome ORDER BY total_vendido DESC"
+        
+        query.prepare(query_text)
+        
+        query.bindValue(":start_date", start_date)
+        query.bindValue(":end_date", end_date)
+        
+        if filtro_vendedor_nome:
+            query.bindValue(":vendedor_nome", filtro_vendedor_nome)
+            
+        self.totals_table.setRowCount(0)
+        
+        if not query.exec():
+            QMessageBox.critical(self, "Erro de Query Sumário", f"Erro ao calcular totais: {query.lastError().text()}")
+            return
+            
+        # 4. Insere os resultados na QTableWidget
+        row = 0
+        while query.next():
+            vendedor = query.value(0)
+            total = query.value(1)
+            
+            self.totals_table.insertRow(row)
+            
+            # Coluna 0: Vendedor
+            item_vendedor = QTableWidgetItem(vendedor)
+            self.totals_table.setItem(row, 0, item_vendedor)
+            
+            # Coluna 1: Total Vendido
+            total_formatado = f"R$ {total:.2f}"
+            item_total = QTableWidgetItem(total_formatado)
+            item_total.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.totals_table.setItem(row, 1, item_total)
+            
+            row += 1
+
 
     def _calculate_total_sales(self):
-        """Calcula e exibe o total das vendas que estão sendo exibidas na tabela."""
+        # [CÓDIGO INALTERADO]
         total_sum = 0.0
-        total_column = 3 # Coluna 'Total (R$)'
+        total_column = 3 
         
         for row in range(self.model.rowCount()):
             index = self.model.index(row, total_column)
@@ -204,24 +376,19 @@ class RelatoriosVendasDialog(QDialog):
         self.total_sales_label.setText(f"Total de Vendas Exibidas: R$ {total_sum:.2f}")
 
     def show_sale_details(self, index: QModelIndex):
-        """Carrega os itens da venda selecionada na tabela de detalhes."""
-        # Garante que o details_model exista
+        # [CÓDIGO INALTERADO]
         if not hasattr(self, 'details_model'):
             self.details_model = QSqlQueryModel(self)
             
         if not index.isValid():
-            # Limpa os detalhes se nada estiver selecionado
-            # Cria um QSqlQueryModel vazio para limpar o view
             self.details_table_view.setModel(QSqlQueryModel(self)) 
             return
 
-        # 1. Obtém o 'venda_id' da linha selecionada (coluna 0)
         venda_id_index = self.model.index(index.row(), 0)
         venda_id = self.model.data(venda_id_index)
         
         if venda_id is None: return
 
-        # 2. Query para buscar os itens da venda específica
         details_query = QSqlQuery(self.qt_db)
         details_query.prepare("""
         SELECT 
@@ -240,13 +407,11 @@ class RelatoriosVendasDialog(QDialog):
             
         self.details_model.setQuery(details_query)
             
-        # 3. Configura os cabeçalhos da tabela de detalhes
         self.details_model.setHeaderData(0, Qt.Horizontal, "Produto")
         self.details_model.setHeaderData(1, Qt.Horizontal, "Qtd.")
         self.details_model.setHeaderData(2, Qt.Horizontal, "Preço Unit. (R$)")
         self.details_model.setHeaderData(3, Qt.Horizontal, "Subtotal (R$)")
 
-        # Ajusta a largura das colunas
         self.details_table_view.setModel(self.details_model)
         self.details_table_view.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.details_table_view.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)

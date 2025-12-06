@@ -93,11 +93,18 @@ class PDVWindow(QMainWindow):
         )
         dialog.exec()
     
+    # Trecho em ui/main_window.py
     def _show_product_management(self):
-        """Abre o diálogo de gerenciamento de produtos."""
-        # Instancia o diálogo, passando a conexão ativa com o banco de dados
+        logged_user = self.logged_user # O dicionário do usuário logado
+        
+        # ⭐️ VERIFICAÇÃO DE ACESSO AQUI (Nível 1) ⭐️
+        if logged_user.get('cargo') != 'admin':
+            QMessageBox.warning(self, "Acesso Negado", "Apenas administradores podem gerenciar produtos.")
+            return
+            
         dialog = GerenciarProdutosDialog(
             db_connection=self.db_connection, 
+            logged_user=logged_user, # Passa o objeto do usuário
             parent=self
         )
         dialog.exec()
@@ -536,7 +543,7 @@ class PDVWindow(QMainWindow):
         self.list_window.exec()
 
     def _setup_ui(self):
-        """Configura os layouts e widgets da janela."""
+        """Configura os layouts e widgets da janela, incluindo o botão de Logout."""
         
         central_widget = QWidget()
         main_layout = QHBoxLayout(central_widget)
@@ -552,7 +559,9 @@ class PDVWindow(QMainWindow):
         self.search_input.setPlaceholderText("Digite o código ou nome do produto. Use Enter para adicionar.")
         self.search_input.setFont(QFont("Arial", 14))
         
-        self._setup_autocompleter()
+        # O método _setup_autocompleter deve ser definido na classe
+        if hasattr(self, '_setup_autocompleter'):
+            self._setup_autocompleter()
         
         add_button = QPushButton("Adicionar (Enter)")
         add_button.setStyleSheet("background-color: #2196F3; color: white; padding: 10px;")
@@ -582,7 +591,7 @@ class PDVWindow(QMainWindow):
         
         # 1. Área do TOTAL (Display)
         self.total_display = QLabel("R$ 0,00")
-        self.total_display.setObjectName("totalDisplay") # Importante para o Stylesheet
+        self.total_display.setObjectName("totalDisplay")
         self.total_display.setFont(QFont("Arial", 32, QFont.Bold))
         self.total_display.setAlignment(Qt.AlignCenter)
         
@@ -590,7 +599,7 @@ class PDVWindow(QMainWindow):
         checkout_layout.addWidget(self.total_display)
         checkout_layout.addSpacing(40) 
 
-        # 2. Campo de Valor Recebido (Apenas visual, o cálculo real está no CheckoutDialog)
+        # 2. Campo de Valor Recebido (Apenas visual)
         checkout_layout.addWidget(QLabel("VALOR RECEBIDO:", alignment=Qt.AlignCenter))
         self.received_input = QLineEdit("0.00")
         self.received_input.setFont(QFont("Arial", 16))
@@ -616,38 +625,28 @@ class PDVWindow(QMainWindow):
         register_button.setFont(QFont("Arial", 12))
         register_button.setStyleSheet("background-color: #607D8B; color: white; padding: 10px; border-radius: 5px;")
         register_button.clicked.connect(self._handle_open_registration)
+        checkout_layout.addWidget(register_button) 
         
-        
-        # ⭐️ NOVO BOTÃO: RELATÓRIOS DE VENDAS ⭐️
+        # Botão: Relatórios de Vendas
         self.reports_button = QPushButton("📊 Relatórios de Vendas")
         self.reports_button.setFont(QFont("Arial", 12))
         self.reports_button.setStyleSheet("background-color: #3f51b5; color: white; padding: 10px; border-radius: 5px;") 
-        self.reports_button.clicked.connect(self._show_sales_reports) # ⬅️ CONECTADO AO NOVO MÉTODO
+        self.reports_button.clicked.connect(self._show_sales_reports) 
         checkout_layout.addWidget(self.reports_button)
         
-        # 1. Crie o botão para gerenciar produtos
+        # Botão: Gerenciar Produtos
         self.manage_products_button = QPushButton("📦 Gerenciar Produtos")
-        
-        # 2. Conecte o sinal 'clicked' ao método que abre o diálogo
+        self.manage_products_button.setFont(QFont("Arial", 12))
+        self.manage_products_button.setStyleSheet("background-color: #607D8B; color: white; padding: 10px; border-radius: 5px;") 
         self.manage_products_button.clicked.connect(self._show_product_management)
+        checkout_layout.addWidget(self.manage_products_button) 
         
-        
-        checkout_layout.addWidget(self.manage_products_button) # ⬅️ Este já estava aqui, movi o Relatórios para cima dele.
-        
-        
-        checkout_layout.addWidget(self.manage_products_button)
-        # ➡️ FIM DA INSERÇÃO
-        self.register_employee_button = QPushButton("👨‍💼 Cadastrar Funcionário")
-    
-        
-        # ⭐️ NOVO BOTÃO: Cadastrar Funcionário ⭐️
+        # Botão: Cadastrar Funcionário
         self.register_employee_button = QPushButton("👨‍💼 Cadastrar Funcionário")
         self.register_employee_button.setFont(QFont("Arial", 12))
-        # Estilo Admin (vermelho/destacado, pois é uma função crítica)
         self.register_employee_button.setStyleSheet("background-color: #FF5722; color: white; padding: 10px; border-radius: 5px;") 
         self.register_employee_button.clicked.connect(self._show_employee_registration)
         checkout_layout.addWidget(self.register_employee_button)
-        
         
         # Botão: Gerenciar Funcionários (Listar, Editar, Excluir)
         self.manage_employee_button = QPushButton("👥 Gerenciar Funcionários")
@@ -657,17 +656,28 @@ class PDVWindow(QMainWindow):
         checkout_layout.addWidget(self.manage_employee_button)
         
         is_admin = self.logged_user['cargo'] == 'admin'
-        
+    
         if not is_admin:
-            # Oculta e desabilita o botão de Cadastro
+            
+            # 1. BLOQUEIO DE FUNCIONÁRIOS
             self.register_employee_button.setVisible(False)
             self.register_employee_button.setEnabled(False)
-            
-            # Oculta e desabilita o botão de Gerenciamento
             self.manage_employee_button.setVisible(False) 
             self.manage_employee_button.setEnabled(False)
-        
-        # 4. Botão Finalizar
+            
+            # 2. BLOQUEIO DE GERENCIAMENTO DE PRODUTOS
+            register_button.setVisible(False)
+            register_button.setEnabled(False)
+            self.manage_products_button.setVisible(False)
+            self.manage_products_button.setEnabled(False)
+            
+            # 3. BLOQUEIO DE RELATÓRIOS GERAIS
+            # Se for Vendedor, ele só pode ver os relatórios dele.
+            # O self._show_sales_reports já está configurado para filtrar pelo nome do vendedor
+            # que é passado na inicialização da janela de Relatórios.
+            # Portanto, MANTEMOS O reports_button VISÍVEL, mas ele já estará filtrado internamente.
+            
+        # 4. Botão Finalizar (VISÍVEL para todos)
         finalize_button = QPushButton("FINALIZAR VENDA (F12)")
         finalize_button.setFont(QFont("Arial", 18, QFont.Bold))
         finalize_button.setStyleSheet("background-color: #4CAF50; color: white; padding: 15px; border-radius: 5px;")
@@ -681,9 +691,21 @@ class PDVWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         self.search_input.setFocus()
     
-    # Em ui/main_window.py, dentro da classe PDVWindow:
+# --- NOVO MÉTODO DENTRO DA CLASSE PDVWindow ---
 
-    # ... (depois de _show_employee_registration) ...
+    def _handle_logout(self):
+        """Lida com a confirmação e o processo de logout."""
+        
+        reply = QMessageBox.question(self, 
+                                    "Confirmação de Logout", 
+                                    "Tem certeza que deseja encerrar a sessão e voltar para o Login?", 
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            # AQUI É O PONTO CHAVE:
+            # 1. Fecha a janela principal.
+            # 2. O main.py detectará o fechamento e reabrirá a LoginWindow.
+            self.close()
     
     def _show_employee_management(self):
         """
