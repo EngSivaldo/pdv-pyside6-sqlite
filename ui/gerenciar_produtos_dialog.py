@@ -1,4 +1,5 @@
-# ui/gerenciar_produtos_dialog.py
+# ui/gerenciar_produtos_dialog.py (CÓDIGO CORRIGIDO)
+
 import os
 import sqlite3
 from PySide6.QtWidgets import (
@@ -54,7 +55,6 @@ class GerenciarProdutosDialog(QDialog):
         # FIX DE CONEXÃO: Obtendo o caminho exato do arquivo do banco de dados a partir da conexão sqlite3
         cursor = self.db_connection.cursor()
         cursor.execute("PRAGMA database_list")
-        # O caminho do arquivo é o terceiro elemento (índice 2)
         db_path = cursor.fetchone()[2] 
         
         connection_name = "product_model_conn" 
@@ -76,16 +76,19 @@ class GerenciarProdutosDialog(QDialog):
         self.model.setTable("Produtos")
         self.model.select()
 
-        # Configurações do cabeçalho (Ajuste as colunas conforme sua tabela Produtos)
-        self.model.setHeaderData(0, Qt.Horizontal, "ID")
+        # ⭐️ AJUSTE DE CABEÇALHOS ⭐️
+        # A ordem das colunas na tabela Produtos é: codigo, nome, preco, quantidade, tipo_medicao, categoria
+        self.model.setHeaderData(0, Qt.Horizontal, "Código") # codigo (ID)
         self.model.setHeaderData(1, Qt.Horizontal, "Nome")
         self.model.setHeaderData(2, Qt.Horizontal, "Preço Unitário")
-        # ... Adicione mais headers conforme necessário
+        self.model.setHeaderData(3, Qt.Horizontal, "Quantidade (Estoque)") # ⬅️ NOVO
+        self.model.setHeaderData(4, Qt.Horizontal, "Medição")
+        self.model.setHeaderData(5, Qt.Horizontal, "Categoria")
 
         self.table_view.setModel(self.model)
         
-        # Oculta o ID (coluna 0)
-        self.table_view.hideColumn(0) 
+        # Ocultar o código é útil, mas é importante saber onde ele está (coluna 0)
+        # self.table_view.hideColumn(0) 
         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         
     def edit_product(self):
@@ -103,7 +106,7 @@ class GerenciarProdutosDialog(QDialog):
         product_id = self.model.data(id_index)
         
         # 2. Abrir o diálogo de cadastro no MODO EDIÇÃO
-        dialog = dialog = ProductRegistrationWindow(
+        dialog = ProductRegistrationWindow(
             db_connection=self.db_connection, 
             product_id=product_id, 
             parent=self

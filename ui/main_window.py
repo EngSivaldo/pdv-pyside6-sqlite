@@ -17,6 +17,7 @@ import re
 # Importa a lógica (core)
 from core.database import connect_db, create_and_populate_tables 
 from core.cart_logic import CartManager
+from core.database import finalizar_venda # <--- ADICIONE ESTA LINHA!
 # Importa as novas janelas
 from ui.product_registration import ProductRegistrationWindow
 from ui.product_list import ProductListWindow 
@@ -24,7 +25,7 @@ from ui.checkout_dialog import CheckoutDialog
 from .cadastro_funcionario_dialog import CadastroFuncionarioDialog 
 from .gerenciar_funcionarios_dialog import GerenciarFuncionariosDialog
 from ui.gerenciar_produtos_dialog import GerenciarProdutosDialog
-
+from ui.relatorios_vendas_dialog import RelatoriosVendasDialog # ⬅️ NOVO IMPORT AQUI
 # ----------------------------------------------------
 # --- FUNÇÕES DE NORMALIZAÇÃO PARA BUSCA (PDV) ---
 # ----------------------------------------------------
@@ -364,45 +365,10 @@ class PDVWindow(QMainWindow):
         self.search_input.clear()
         self.search_input.setFocus()
 
-    def _record_sale(self, total: float, received: float, change: float):
-        """Registra a transação de venda e seus itens no banco de dados."""
-        if not self.db_connection: return False
 
-        try:
-            cursor = self.db_connection.cursor()
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Substitua este método inteiro pelo código abaixo:
+    # ui/main_window.py
 
-            # 1. Registrar a Venda Principal
-            cursor.execute(
-                "INSERT INTO Vendas (data_hora, total_venda, valor_recebido, troco) VALUES (?, ?, ?, ?)",
-                (timestamp, total, received, change)
-            )
-            venda_id = cursor.lastrowid 
-
-            # 2. Registrar os Itens da Venda
-            items_to_insert = []
-            for item in self.cart_manager.cart_items:
-                items_to_insert.append((
-                    venda_id,
-                    item['codigo'],
-                    item['nome'],
-                    item['quantidade'],
-                    item['preco'] 
-                ))
-
-            cursor.executemany(
-                "INSERT INTO ItensVenda (venda_id, produto_codigo, nome_produto, quantidade, preco_unitario) VALUES (?, ?, ?, ?, ?)",
-                items_to_insert
-            )
-            
-            self.db_connection.commit()
-            return True
-
-        except sqlite3.Error as e:
-            QMessageBox.critical(self, "Erro de Banco de Dados", f"Falha ao registrar a venda: {e}")
-            self.db_connection.rollback()
-            return False
-    
     def _handle_finalize_sale(self):
         """Abre o diálogo de Checkout para confirmação de pagamento e registra a venda."""
         
@@ -415,24 +381,43 @@ class PDVWindow(QMainWindow):
         checkout_dialog = CheckoutDialog(total_venda=total, parent=self)
         
         if checkout_dialog.exec() == QDialog.Accepted:
-            # Venda foi aceita na tela de Checkout
             received = checkout_dialog.valor_recebido
             troco = checkout_dialog.troco
+            id_funcionario = self.logged_user.get('id')
             
-            if not self._record_sale(total, received, troco): 
+            if not id_funcionario:
+                QMessageBox.critical(self, "Erro", "ID do funcionário logado não encontrado. Venda não registrada.")
                 return
 
-            formatted_troco = f"R$ {troco:,.2f}".replace('.', '#').replace(',', '.').replace('#', ',')
-            QMessageBox.information(self, "Venda Concluída", f"Troco: {formatted_troco}")
+            itens_venda = [(
+                item['codigo'], 
+                item['nome'], 
+                item['quantidade'], 
+                item['preco']
+            ) for item in self.cart_manager.cart_items] 
+            
+            # ⭐️ CHAMA A FUNÇÃO e CAPTURA O ID DA VENDA ⭐️
+            venda_id = finalizar_venda(
+                self.db_connection,
+                itens_venda, 
+                total,
+                received,
+                troco,
+                id_funcionario 
+            )
+            
+            if not isinstance(venda_id, int) or venda_id is None: 
+                QMessageBox.critical(self, "Erro de Banco de Dados", "Falha ao registrar a venda. Consulte o console para detalhes.")
+                return
+            
+            # ⭐️ NOVO PASSO: CHAMAR O DIÁLOGO DE IMPRESSÃO ⭐️
+            self._show_print_dialog(venda_id, total, received, troco, itens_venda) 
             
             # Limpa o carrinho e a interface
             self.cart_manager.clear_cart()
             self._update_cart_table()
             self._update_total_display(0.0)
-            self.received_input.setText("0.00")
             self.search_input.setFocus()
-    
-    # --- EDIÇÃO DE QUANTIDADE POR CLIQUE DUPLO ---
     
     def _handle_edit_quantity(self, index):
         """Lida com o clique duplo na tabela para editar a quantidade do item."""
@@ -625,14 +610,25 @@ class PDVWindow(QMainWindow):
         register_button.setFont(QFont("Arial", 12))
         register_button.setStyleSheet("background-color: #607D8B; color: white; padding: 10px; border-radius: 5px;")
         register_button.clicked.connect(self._handle_open_registration)
-        checkout_layout.addWidget(register_button)
+        
+        
+        # ⭐️ NOVO BOTÃO: RELATÓRIOS DE VENDAS ⭐️
+        self.reports_button = QPushButton("📊 Relatórios de Vendas")
+        self.reports_button.setFont(QFont("Arial", 12))
+        self.reports_button.setStyleSheet("background-color: #3f51b5; color: white; padding: 10px; border-radius: 5px;") 
+        self.reports_button.clicked.connect(self._show_sales_reports) # ⬅️ CONECTADO AO NOVO MÉTODO
+        checkout_layout.addWidget(self.reports_button)
         
         # 1. Crie o botão para gerenciar produtos
         self.manage_products_button = QPushButton("📦 Gerenciar Produtos")
         
         # 2. Conecte o sinal 'clicked' ao método que abre o diálogo
         self.manage_products_button.clicked.connect(self._show_product_management)
-        # ⬅️ INSERIR AQUI
+        
+        
+        checkout_layout.addWidget(self.manage_products_button) # ⬅️ Este já estava aqui, movi o Relatórios para cima dele.
+        
+        
         checkout_layout.addWidget(self.manage_products_button)
         # ➡️ FIM DA INSERÇÃO
         self.register_employee_button = QPushButton("👨‍💼 Cadastrar Funcionário")
@@ -691,4 +687,80 @@ class PDVWindow(QMainWindow):
         dialog = GerenciarFuncionariosDialog(self.db_connection, self)
         dialog.exec()
         
+    # ... (Outros métodos como _show_employee_management, etc.)
+
+    def _show_sales_reports(self):
+        """
+        Abre o diálogo de relatórios de vendas.
+        """
+        # Abertura do novo diálogo de relatórios
+        dialog = RelatoriosVendasDialog(self.db_connection, self)
+        dialog.exec()
         
+    # ui/main_window.py
+
+    def _show_print_dialog(self, venda_id, total, recebido, troco, itens_venda):
+        """
+        Mostra um diálogo perguntando se o usuário deseja imprimir o recibo.
+        Se Sim, chama o método de geração/impressão.
+        """
+        formatted_troco = f"R$ {troco:,.2f}".replace('.', '#').replace(',', '.').replace('#', ',')
+        
+        # 1. Mostrar o Troco e a pergunta
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Venda Concluída")
+        msg_box.setText(f"Venda {venda_id} concluída com sucesso!\n\nTroco: **{formatted_troco}**")
+        
+        # Adicionar a pergunta sobre o recibo
+        msg_box.setInformativeText("Deseja imprimir o recibo desta transação?")
+        
+        # Configurar botões: Sim (Imprimir) e Não (Apenas Fechar)
+        print_button = msg_box.addButton("Sim, Imprimir Recibo", QMessageBox.YesRole)
+        close_button = msg_box.addButton("Não, Apenas Fechar", QMessageBox.NoRole)
+        msg_box.setDefaultButton(close_button)
+
+        # Remove o stylesheet da Message Box para evitar problemas de visualização
+        msg_box.setStyleSheet("")
+        
+        msg_box.exec()
+        
+        if msg_box.clickedButton() == print_button:
+            # 2. Se o usuário escolher imprimir, chama a função de geração de recibo
+            self._generate_and_print_receipt(venda_id, total, recebido, troco, itens_venda)
+            
+    def _generate_and_print_receipt(self, venda_id, total, recebido, troco, itens_venda):
+        """
+        (Função Placeholder)
+        Aqui é onde a lógica de geração de PDF ou HTML do recibo seria implementada.
+        """
+        # Exemplo de dados:
+        vendedor = self.logged_user['nome']
+        data_hora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+        # Em um sistema real, você usaria bibliotecas como ReportLab (PDF) ou 
+        # PySide6's QPrinter/QTextDocument (para HTML/texto formatado) aqui.
+
+        recibo_texto = f"""
+        ========================================
+             RECIBO DE VENDA - PDV
+        ========================================
+        Venda ID: {venda_id}
+        Data/Hora: {data_hora}
+        Vendedor: {vendedor}
+        ----------------------------------------
+        PRODUTO       QTD   PREÇO UN.   SUBTOTAL
+        ----------------------------------------"""
+
+        for codigo, nome, qtd, preco in itens_venda:
+            subtotal = qtd * preco
+            recibo_texto += f"\n{nome[:15].ljust(15)} {qtd:5.2f} {preco:10.2f} {subtotal:10.2f}"
+
+        recibo_texto += f"""
+        ----------------------------------------
+        TOTAL: R$ {total:,.2f}
+        RECEBIDO: R$ {recebido:,.2f}
+        TROCO: R$ {troco:,.2f}
+        ========================================
+        """
+
+        QMessageBox.information(self, "Impressão (Simulada)", f"Recibo gerado com sucesso. O texto abaixo seria enviado para a impressora:\n\n{recibo_texto}")

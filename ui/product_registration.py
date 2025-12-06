@@ -21,7 +21,7 @@ class ProductRegistrationWindow(QDialog):
     def __init__(self, db_connection, product_id=None, parent=None): 
         super().__init__(parent) 
         self.setWindowTitle("Cadastro de Produtos")
-        self.setGeometry(200, 200, 450, 350) 
+        self.setGeometry(200, 200, 450, 400) # Aumentei a altura para o novo campo
         self.db_connection = db_connection
         self.product_id = product_id 
         
@@ -75,18 +75,28 @@ class ProductRegistrationWindow(QDialog):
         price_layout.addWidget(self.price_input)
         main_layout.addLayout(price_layout)
         
-        # --- Campo: Categoria (Valor que vai para a coluna 'categoria') ---
+        # ⭐️ NOVO CAMPO: QUANTIDADE EM ESTOQUE ⭐️
+        qty_layout = QHBoxLayout()
+        qty_layout.addWidget(QLabel("Estoque (Qtd):"))
+        self.qty_input = QDoubleSpinBox()
+        self.qty_input.setDecimals(2)
+        self.qty_input.setRange(0.00, 99999.99)
+        self.qty_input.setFont(input_font)
+        self.qty_input.setAlignment(Qt.AlignRight)
+        qty_layout.addWidget(self.qty_input)
+        main_layout.addLayout(qty_layout)
+        
+        # --- Campo: Categoria ---
         category_layout = QHBoxLayout()
         category_layout.addWidget(QLabel("Categoria:"))
         self.category_input = QComboBox() 
         self.category_input.setFont(input_font)
-        
         self.category_input.addItems(list(CATEGORY_PREFIXES.keys()))
         self.category_input.setCurrentText("Alimentos")
         category_layout.addWidget(self.category_input)
         main_layout.addLayout(category_layout)
         
-        # ⭐️ Campo: Tipo de Medição (Valor que vai para a coluna 'tipo_medicao') ---
+        # --- Campo: Tipo de Medição ---
         sale_type_layout = QHBoxLayout()
         sale_type_layout.addWidget(QLabel("Método de Venda:"))
         self.sale_type_input = QComboBox() 
@@ -104,7 +114,7 @@ class ProductRegistrationWindow(QDialog):
         save_button = QPushButton("💾 Salvar Produto")
         save_button.setFont(QFont("Arial", 12, QFont.Bold))
         save_button.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px;")
-        save_button.clicked.connect(self._handle_save_product) # ⬅️ CORREÇÃO CRÍTICA: Conectado ao dispatcher
+        save_button.clicked.connect(self._handle_save_product)
         button_layout.addWidget(save_button)
         
         cancel_button = QPushButton("Cancelar")
@@ -120,6 +130,10 @@ class ProductRegistrationWindow(QDialog):
         prefix = CATEGORY_PREFIXES.get(selected_category, "X")
         
         if not self.db_connection: return
+
+        # Somente gera novo código se NÃO estiver em modo edição
+        if self.product_id is not None:
+             return
 
         try:
             cursor = self.db_connection.cursor()
@@ -149,16 +163,16 @@ class ProductRegistrationWindow(QDialog):
             QMessageBox.critical(self, "Erro de BD", f"Erro ao gerar código: {e}")
             self.code_input.setText("ERRO")
 
-    # --- NOVO/CORRIGIDO: Apenas executa a INSERT, usando os argumentos passados ---
-    def _insert_product(self, codigo, nome, preco, tipo_medicao, categoria):
+    def _insert_product(self, codigo, nome, preco, quantidade, tipo_medicao, categoria):
         """Executa a query INSERT. Retorna True/False."""
         if not self.db_connection: return False
         
         try:
             cursor = self.db_connection.cursor()
+            # ⭐️ CORREÇÃO: Adicionando a coluna 'quantidade' ao INSERT ⭐️
             cursor.execute(
-                "INSERT INTO Produtos (codigo, nome, preco, tipo_medicao, categoria) VALUES (?, ?, ?, ?, ?)",
-                (codigo, nome, preco, tipo_medicao, categoria) 
+                "INSERT INTO Produtos (codigo, nome, preco, quantidade, tipo_medicao, categoria) VALUES (?, ?, ?, ?, ?, ?)",
+                (codigo, nome, preco, quantidade, tipo_medicao, categoria) 
             )
             self.db_connection.commit()
             return True
@@ -174,21 +188,22 @@ class ProductRegistrationWindow(QDialog):
         """
         Carrega os dados do produto usando self.product_id e preenche os campos do formulário.
         """
-        self.code_input.setText(self.product_id) # ⬅️ PREENCHE O CÓDIGO AQUI
+        self.code_input.setText(self.product_id) 
         try:
             cursor = self.db_connection.cursor()
-            query = "SELECT nome, preco, tipo_medicao, categoria FROM Produtos WHERE codigo = ?"
+            # ⭐️ CORREÇÃO: Adicionando a coluna 'quantidade' ao SELECT ⭐️
+            query = "SELECT nome, preco, quantidade, tipo_medicao, categoria FROM Produtos WHERE codigo = ?"
             cursor.execute(query, (self.product_id,))
             
             data = cursor.fetchone()
             
             if data:
-                nome, preco, tipo_medicao, categoria = data 
+                # Ajustamos o unpack para incluir a nova coluna
+                nome, preco, quantidade, tipo_medicao, categoria = data 
                 
                 self.name_input.setText(nome)
                 self.price_input.setValue(preco) 
-                
-                # ⬅️ CORREÇÃO: Usando o nome correto do widget
+                self.qty_input.setValue(quantidade) # ⭐️ NOVO: Preenche a quantidade ⭐️
                 self.sale_type_input.setCurrentText(tipo_medicao) 
                 self.category_input.setCurrentText(categoria)
 
@@ -200,7 +215,6 @@ class ProductRegistrationWindow(QDialog):
         except sqlite3.Error as e:
             QMessageBox.critical(self, "Erro DB", f"Falha ao carregar dados do produto: {e}")
             
-    # --- NOVO/CORRIGIDO: O Dispatcher gerencia a coleta, validação e direcionamento ---
     def _handle_save_product(self):
         """Coleta dados, decide se deve INSERIR (Cadastro) ou ATUALIZAR (Edição)."""
         
@@ -208,6 +222,7 @@ class ProductRegistrationWindow(QDialog):
         codigo = self.code_input.text().strip()
         nome = self.name_input.text().strip()
         preco = self.price_input.value()
+        quantidade = self.qty_input.value() # ⭐️ NOVO: Coletar a quantidade ⭐️
         tipo_medicao = self.sale_type_input.currentText()
         categoria = self.category_input.currentText()
         
@@ -218,50 +233,46 @@ class ProductRegistrationWindow(QDialog):
         # 2. Direcionar para INSERT ou UPDATE
         if self.product_id is not None:
             # ⬅️ MODO EDIÇÃO (UPDATE)
-            success = self._update_product(nome, preco, tipo_medicao, categoria)
+            success = self._update_product(nome, preco, quantidade, tipo_medicao, categoria) # ⭐️ Inclui quantidade ⭐️
             title = "Edição"
         else:
             # ➡️ MODO CADASTRO (INSERT)
-            # ⬅️ CORREÇÃO: Passando o 'codigo' PK para a inserção
-            success = self._insert_product(codigo, nome, preco, tipo_medicao, categoria) 
+            success = self._insert_product(codigo, nome, preco, quantidade, tipo_medicao, categoria) # ⭐️ Inclui quantidade ⭐️
             title = "Cadastro"
             
         # 3. Status e Fechamento
         if success:
             QMessageBox.information(self, title, f"Produto salvo com sucesso! Código: {codigo}")
             
-            # Limpa o formulário ou fecha o diálogo.
             if self.product_id is None:
-                # Se for cadastro, limpa e gera novo código.
                 self.name_input.clear()
                 self.price_input.setValue(0.01)
+                self.qty_input.setValue(0.00) # Limpa o estoque para novo cadastro
                 self._generate_next_code()
             else:
-                # Se for edição, fecha a janela.
                 self.accept()
         else:
-            # Em caso de falha (exceto IntegrityError, que já trata o QBox dentro do helper)
             if title == "Edição": 
                  QMessageBox.critical(self, title, f"Erro ao salvar o produto.")
-            # self.reject() - Manter o diálogo aberto para correção
 
-    # --- NOVO/CORRIGIDO: Apenas executa a UPDATE, usando os argumentos passados ---
-    def _update_product(self, nome, preco, tipo_medicao, categoria):
+
+    def _update_product(self, nome, preco, quantidade, tipo_medicao, categoria):
         """
-        Executa a query parametrizada UPDATE na tabela Produtos.
+        Executa a query parametrizada UPDATE na tabela Produtos, incluindo a quantidade.
         Retorna True em caso de sucesso, False em caso de falha.
         """
         if self.product_id is None:
             QMessageBox.critical(self, "Erro Fatal", "ID do produto ausente para operação UPDATE.")
             return False
 
+        # ⭐️ CORREÇÃO: Adicionando a coluna 'quantidade' ao UPDATE ⭐️
         query = """
             UPDATE Produtos 
-            SET nome = ?, preco = ?, tipo_medicao = ?, categoria = ? 
+            SET nome = ?, preco = ?, quantidade = ?, tipo_medicao = ?, categoria = ? 
             WHERE codigo = ?
         """
-        # Note que self.product_id é o código PK na edição
-        params = (nome, preco, tipo_medicao, categoria, self.product_id)
+        # A ordem dos parâmetros deve corresponder à ordem dos '?' na query
+        params = (nome, preco, quantidade, tipo_medicao, categoria, self.product_id)
         
         if not self.db_connection: return False
 
