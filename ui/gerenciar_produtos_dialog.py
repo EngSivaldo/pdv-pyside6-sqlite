@@ -1,26 +1,25 @@
-# ui/gerenciar_produtos_dialog.py (CÓDIGO CORRIGIDO)
 import os
 import sqlite3
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTableView, QMessageBox, QHeaderView
+    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTableView, QMessageBox, QHeaderView, QLabel
 )
 from PySide6.QtSql import QSqlTableModel, QSqlDatabase
 from PySide6.QtCore import Qt
+from PySide6.QtSql import QSqlError 
 from ui.product_registration import ProductRegistrationWindow 
 from ui.adjust_stock_dialog import AdjustStockDialog
 
 class GerenciarProdutosDialog(QDialog):
     """Diálogo para listar, editar e excluir produtos, com restrição de acesso."""
 
-    # ⭐️ MUDANÇA 1: Adicionar logged_user no __init__ ⭐️
     def __init__(self, db_connection: sqlite3.Connection, logged_user: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Gerenciamento de Produtos")
         self.db_connection = db_connection
-        self.logged_user = logged_user # Armazena o usuário logado
-        self.is_admin = self.logged_user.get('cargo') == 'admin' # Verifica o cargo
+        self.logged_user = logged_user 
+        self.is_admin = self.logged_user.get('cargo') == 'admin' 
         
-        self.resize(800, 500)
+        self.resize(1000, 600) # Aumentado para caber mais colunas
         
         self.setup_ui()
         self.load_products()
@@ -39,39 +38,36 @@ class GerenciarProdutosDialog(QDialog):
         
         # Cria os botões
         self.adjust_stock_button = QPushButton("➕ Ajustar Estoque Rápido")
-        self.adjust_stock_button.setStyleSheet("background-color: #007BFF; color: white;")
+        self.adjust_stock_button.setStyleSheet("background-color: #007BFF; color: white; padding: 10px 15px;")
         self.adjust_stock_button.clicked.connect(self.adjust_stock)
         
         self.edit_button = QPushButton("✏️ Editar Selecionado")
-        self.edit_button.setStyleSheet("background-color: #FFA000; color: white;")
+        self.edit_button.setStyleSheet("background-color: #FFA000; color: white; padding: 10px 15px;")
         self.edit_button.clicked.connect(self.edit_product)
 
         self.delete_button = QPushButton("❌ Excluir Selecionado")
-        self.delete_button.setStyleSheet("background-color: #D32F2F; color: white;")
+        self.delete_button.setStyleSheet("background-color: #D32F2F; color: white; padding: 10px 15px;")
         self.delete_button.clicked.connect(self.delete_product)
         
-        # ⭐️ MUDANÇA 2: Restringir a visibilidade dos botões ⭐️
+        # Lógica de Visibilidade:
         
+        # Ajustar Estoque Rápido é visível para todos (pode ser usado como inventário)
+        button_layout.addWidget(self.adjust_stock_button) 
+        button_layout.addStretch(1) # Espaçamento
+        
+        # Edição e Exclusão são apenas para Admin
         if self.is_admin:
-            # Se for admin, adiciona todos os botões de controle
-            button_layout.addWidget(self.adjust_stock_button) 
-            button_layout.addStretch(1)
             button_layout.addWidget(self.edit_button)
             button_layout.addWidget(self.delete_button)
-            button_layout.addStretch(1)
         else:
-            # Se não for admin (vendedor), não adiciona os botões de edição/exclusão
-            # Mas podemos adicionar uma label de aviso, se desejado
-            # label_aviso = QLabel("Visualização: Apenas administradores podem modificar produtos.")
-            # button_layout.addWidget(label_aviso)
+            # Garante que, se o vendedor estiver logado, não haja botões vazios no meio
             pass
-        
+
         main_layout.addLayout(button_layout)
         
     def load_products(self):
         """Carrega os dados da tabela Produtos usando QSqlTableModel."""
         
-        # FIX DE CONEXÃO: Obtendo o caminho exato do arquivo do banco de dados a partir da conexão sqlite3
         cursor = self.db_connection.cursor()
         cursor.execute("PRAGMA database_list")
         db_path = cursor.fetchone()[2] 
@@ -95,20 +91,34 @@ class GerenciarProdutosDialog(QDialog):
         self.model.setTable("Produtos")
         self.model.select()
 
-        # ⭐️ AJUSTE DE CABEÇALHOS ⭐️
-        # A ordem das colunas na tabela Produtos é: codigo, nome, preco, quantidade, tipo_medicao, categoria
-        self.model.setHeaderData(0, Qt.Horizontal, "Código") # codigo (ID)
-        self.model.setHeaderData(1, Qt.Horizontal, "Nome")
-        self.model.setHeaderData(2, Qt.Horizontal, "Preço Unitário")
-        self.model.setHeaderData(3, Qt.Horizontal, "Quantidade (Estoque)") # ⬅️ NOVO
-        self.model.setHeaderData(4, Qt.Horizontal, "Medição")
-        self.model.setHeaderData(5, Qt.Horizontal, "Categoria")
+        # ⭐️ AJUSTE DE CABEÇALHOS (BASEADO NA ORDEM REAL DO DB: id, codigo, nome, preco, quantidade, tipo_medicao, categoria, ativo) ⭐️
+        
+        # Coluna 0: id (oculta)
+        self.model.setHeaderData(0, Qt.Horizontal, "ID") 
+        # Coluna 1: codigo 
+        self.model.setHeaderData(1, Qt.Horizontal, "Código") 
+        # Coluna 2: nome
+        self.model.setHeaderData(2, Qt.Horizontal, "Nome")
+        # Coluna 3: preco
+        self.model.setHeaderData(3, Qt.Horizontal, "Preço Un.") 
+        # Coluna 4: quantidade 
+        self.model.setHeaderData(4, Qt.Horizontal, "Estoque") 
+        # Coluna 5: tipo_medicao
+        self.model.setHeaderData(5, Qt.Horizontal, "Medição")
+        # Coluna 6: categoria
+        self.model.setHeaderData(6, Qt.Horizontal, "Categoria")
+        # Coluna 7: ativo (oculta)
+        self.model.setHeaderData(7, Qt.Horizontal, "Ativo") 
 
         self.table_view.setModel(self.model)
         
-        # Ocultar o código é útil, mas é importante saber onde ele está (coluna 0)
-        # self.table_view.hideColumn(0) 
-        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # Ocultar colunas desnecessárias (ID e Ativo)
+        self.table_view.hideColumn(0) 
+        # self.table_view.hideColumn(7) # Manter Ativo visível pode ser útil para debug/gestão
+        
+        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table_view.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch) # Garante que o Nome estique
+        
         
     def edit_product(self):
         """Abre o diálogo de cadastro no modo edição para o produto selecionado."""
@@ -119,7 +129,7 @@ class GerenciarProdutosDialog(QDialog):
             QMessageBox.warning(self, "Edição Necessária", "Selecione um produto para editar.")
             return
             
-        # 1. Obter o ID do produto (Coluna 0)
+        # 1. Obter o ID interno do produto (Coluna 0, o ID primário)
         selected_row = selected_indexes[0].row()
         id_index = self.model.index(selected_row, 0)
         product_id = self.model.data(id_index)
@@ -144,9 +154,9 @@ class GerenciarProdutosDialog(QDialog):
             QMessageBox.warning(self, "Aviso", "Selecione um produto para excluir.", QMessageBox.Ok)
             return
 
-        # 2. Obter o nome do produto (Assumindo coluna 1)
+        # 2. Obter o nome do produto (Coluna 2)
         index = selected_rows[0]
-        nome = self.model.data(self.model.index(index.row(), 1)) 
+        nome = self.model.data(self.model.index(index.row(), 2)) 
         
         # 3. Pedir Confirmação
         reply = QMessageBox.question(self, 'Confirmação', 
@@ -176,24 +186,20 @@ class GerenciarProdutosDialog(QDialog):
 
         selected_row = selected_rows[0].row()
         
-        # Índices: 0=codigo, 1=nome, 3=quantidade (Estoque)
-        code_index = self.model.index(selected_row, 0)
-        name_index = self.model.index(selected_row, 1)
-        qty_index = self.model.index(selected_row, 3) # ⬅️ Índice da Quantidade
+        # ⭐️ ÍNDICES CORRETOS: 0=id, 1=codigo, 2=nome, 3=preco, 4=quantidade ⭐️
+        code_index = self.model.index(selected_row, 1)
+        name_index = self.model.index(selected_row, 2)
+        qty_index = self.model.index(selected_row, 4) # CORRIGIDO: 4 é 'quantidade'
         
         product_code = self.model.data(code_index)
         product_name = self.model.data(name_index)
         current_qty_raw = self.model.data(qty_index)
-        # ⭐️ CORREÇÃO CRÍTICA: Converta o dado para float antes de usar ou passar ⭐️
+        
         try:
             current_qty = float(current_qty_raw)
-        except (ValueError, TypeError):
-            # Se a conversão falhar (e.g., o campo estiver vazio ou for "None"), assuma 0.0
+        except (ValueError, TypeError, QSqlError):
             current_qty = 0.0
             
-        # 1. Abrir o Diálogo de Ajuste
-        dialog = AdjustStockDialog(product_name, current_qty, self) # Agora 'current_qty' é float
-        
         # 1. Abrir o Diálogo de Ajuste
         dialog = AdjustStockDialog(product_name, current_qty, self)
         
