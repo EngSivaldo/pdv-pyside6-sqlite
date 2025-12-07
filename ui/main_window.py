@@ -684,8 +684,17 @@ class PDVWindow(QMainWindow):
         self.manage_employee_button.clicked.connect(self._show_employee_management)
         checkout_layout.addWidget(self.manage_employee_button)
         
+        # ----------------------------------------------------------------------
+        # ⭐️ BOTÃO DE LOGOUT ADICIONADO AQUI ⭐️
+        self.logout_button = QPushButton("🚪 SAIR (Logout)") 
+        self.logout_button.setFont(QFont("Arial", 12))
+        self.logout_button.setStyleSheet("background-color: #F44336; color: white; padding: 10px; border-radius: 5px;") 
+        self.logout_button.clicked.connect(self._handle_logout)
+        checkout_layout.addWidget(self.logout_button)
+        # ----------------------------------------------------------------------
+        
         is_admin = self.logged_user['cargo'] == 'admin'
-    
+
         if not is_admin:
             
             # 1. BLOQUEIO DE FUNCIONÁRIOS
@@ -701,10 +710,8 @@ class PDVWindow(QMainWindow):
             self.manage_products_button.setEnabled(False)
             
             # 3. BLOQUEIO DE RELATÓRIOS GERAIS
-            # Se for Vendedor, ele só pode ver os relatórios dele.
-            # O self._show_sales_reports já está configurado para filtrar pelo nome do vendedor
-            # que é passado na inicialização da janela de Relatórios.
-            # Portanto, MANTEMOS O reports_button VISÍVEL, mas ele já estará filtrado internamente.
+            # (Mantido visível para vendedor, filtragem interna)
+            pass 
             
         # 4. Botão Finalizar (VISÍVEL para todos)
         finalize_button = QPushButton("FINALIZAR VENDA (F12)")
@@ -719,21 +726,19 @@ class PDVWindow(QMainWindow):
 
         self.setCentralWidget(central_widget)
         self.search_input.setFocus()
-    
-# --- NOVO MÉTODO DENTRO DA CLASSE PDVWindow ---
+
+        # Colocar dentro da CLASSE PDVWindow:
 
     def _handle_logout(self):
         """Lida com a confirmação e o processo de logout."""
-        
+       # Certifique-se de que QMessageBox está importado no topo
+
         reply = QMessageBox.question(self, 
                                     "Confirmação de Logout", 
                                     "Tem certeza que deseja encerrar a sessão e voltar para o Login?", 
                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         
         if reply == QMessageBox.Yes:
-            # AQUI É O PONTO CHAVE:
-            # 1. Fecha a janela principal.
-            # 2. O main.py detectará o fechamento e reabrirá a LoginWindow.
             self.close()
     
     def _show_employee_management(self):
