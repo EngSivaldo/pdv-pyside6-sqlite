@@ -25,7 +25,8 @@ from ui.checkout_dialog import CheckoutDialog
 from .cadastro_funcionario_dialog import CadastroFuncionarioDialog 
 from .gerenciar_funcionarios_dialog import GerenciarFuncionariosDialog
 from ui.gerenciar_produtos_dialog import GerenciarProdutosDialog
-from ui.relatorios_vendas_dialog import RelatoriosVendasDialog # ⬅️ NOVO IMPORT AQUI
+from ui.relatorios_vendas_dialog import RelatoriosVendasDialog 
+from core.database import finalizar_venda, update_stock_after_sale
 # ----------------------------------------------------
 # --- FUNÇÕES DE NORMALIZAÇÃO PARA BUSCA (PDV) ---
 # ----------------------------------------------------
@@ -379,7 +380,7 @@ class PDVWindow(QMainWindow):
     # ui/main_window.py (MÉTODO _handle_finalize_sale)
 
     def _handle_finalize_sale(self):
-        """Abre o diálogo de Checkout para confirmação de pagamento e registra a venda."""
+        """Abre o diálogo de Checkout para confirmação de pagamento, registra a venda e atualiza o estoque."""
         
         total = self.cart_manager.calculate_total()
         
@@ -393,45 +394,73 @@ class PDVWindow(QMainWindow):
             received = checkout_dialog.valor_recebido
             troco = checkout_dialog.troco
             
-            # ⭐️ OBTENÇÃO CORRETA DOS DADOS ⭐️
             id_funcionario = self.logged_user.get('id')
-            vendedor_nome = self.logged_user.get('nome') # <-- Novo (ou corrigido)
+            vendedor_nome = self.logged_user.get('nome')
             
             if not id_funcionario or not vendedor_nome:
                 QMessageBox.critical(self, "Erro", "Dados do funcionário logado incompletos. Venda não registrada.")
                 return
                 
-            itens_venda = [(
-                         item['codigo'], 
-                        item['nome'], 
-                        item['quantidade'],          
-                        item['preco']
-            ) for item in self.cart_manager.cart_items]
+            # ⭐️ PREPARAÇÃO DOS DADOS: Usamos a lista de dicionários para a baixa de estoque ⭐️
+            cart_items_for_stock = self.cart_manager.cart_items 
+            
+            # Lista de tuplas formatada para a função finalizar_venda (como você já usava)
+            itens_venda_para_registro = [(
+                item['codigo'], 
+                item['nome'], 
+                item['quantidade'], 
+                item['preco']
+            ) for item in cart_items_for_stock]
 
-            # ⭐️ CHAMADA CORRIGIDA: ADICIONANDO 'vendedor_nome' ⭐️
-            venda_id = finalizar_venda(
-                self.db_connection,
-                itens_venda, 
-                total,
-                received,
-                troco,
-                id_funcionario,
-                vendedor_nome # ⬅️ ARGUMENTO QUE ESTAVA FALTANDO
-            )
+            conn = self.db_connection
+            conn.execute("BEGIN TRANSACTION;") # ⭐️ INICIA A TRANSAÇÃO ⭐️
             
-            if not isinstance(venda_id, int) or venda_id is None: 
-                QMessageBox.critical(self, "Erro de Banco de Dados", "Falha ao registrar a venda. Consulte o console para detalhes.")
+            try:
+                # 1. ATUALIZA O ESTOQUE
+                # A função usará 'codigo' e 'quantidade' de cada item para a baixa
+                low_stock_alerts = update_stock_after_sale(conn, cart_items_for_stock) 
+                
+                # 2. REGISTRA A VENDA E ITENS
+                venda_id = finalizar_venda(
+                    conn,
+                    itens_venda_para_registro, 
+                    total,
+                    received,
+                    troco,
+                    id_funcionario,
+                    vendedor_nome
+                )
+                
+                if not isinstance(venda_id, int) or venda_id is None:
+                    # Se finalizar_venda retornar um ID inválido, forçamos o erro para o rollback
+                    raise Exception("Falha ao obter o ID da venda.")
+                
+                # 3. CONFIRMA A TRANSAÇÃO: Se chegou aqui, tudo está OK no DB
+                conn.commit()
+                
+                # 4. PROCESSA ALERTAS E FINALIZA A UI
+                
+                # Mostra alertas de estoque
+                if low_stock_alerts:
+                    QMessageBox.warning(self, "ALERTA DE ESTOQUE BAIXO", 
+                                        "Os seguintes produtos estão com estoque crítico:\n" + "\n".join(low_stock_alerts))
+                    
+                self._show_print_dialog(venda_id, total, received, troco, itens_venda_para_registro) 
+                
+                # Limpa a interface
+                self.cart_manager.clear_cart()
+                self._update_cart_table()
+                self._update_total_display(0.0)
+                self.search_input.setFocus()
+                
+            except Exception as e:
+                # ⭐️ ROLLBACK: Se qualquer passo acima falhar, desfaz TODAS as operações ⭐️
+                conn.rollback() 
+                print(f"ERRO FATAL NA TRANSAÇÃO DE VENDA: {e}")
+                QMessageBox.critical(self, "Erro de Transação", 
+                                    "Falha ao registrar a venda ou atualizar o estoque. A transação foi desfeita. Contate o suporte.")
                 return
-            
-            # ⭐️ NOVO PASSO: CHAMAR O DIÁLOGO DE IMPRESSÃO ⭐️
-            self._show_print_dialog(venda_id, total, received, troco, itens_venda) 
-            
-            # Limpa o carrinho e a interface
-            self.cart_manager.clear_cart()
-            self._update_cart_table()
-            self._update_total_display(0.0)
-            self.search_input.setFocus()
-    
+        
     def _handle_edit_quantity(self, index):
         """Lida com o clique duplo na tabela para editar a quantidade do item."""
         

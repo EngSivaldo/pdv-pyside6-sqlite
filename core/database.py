@@ -1,12 +1,14 @@
 import sqlite3
 import os
 from datetime import datetime
+import datetime as dt # Alias para evitar conflito com datetime.now() em finalizar_venda
 
-# Usamos um hash de senha seguro para um administrador inicial (ex: 'admin' hasheado)
-# Nota: Você deve usar uma biblioteca como 'bcrypt' em produção, mas usaremos uma string simples aqui.
-DEFAULT_ADMIN_PASSWORD_HASH = "pbkdf2:sha256:260000$P2N5G7c6W7oM0Z4R$8612f0f0c0573e3a47926b0a701d09e755298a85f817454238e55e378f85f02c" 
+# Usaremos o hash SHA-256 da senha "admin" para compatibilidade com o LoginDialog
+# Hash de "admin" (SHA-256): 8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
+DEFAULT_ADMIN_PASSWORD_HASH = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918" 
 
 DB_NAME = 'pdv.db'
+LOW_STOCK_THRESHOLD = 5 
 
 # --- FUNÇÕES DE CONEXÃO E INICIALIZAÇÃO ---
 
@@ -14,7 +16,6 @@ def connect_db(parent=None):
     """Cria e retorna a conexão com o banco de dados SQLite."""
     try:
         conn = sqlite3.connect(DB_NAME)
-        # Habilita chaves estrangeiras
         conn.execute("PRAGMA foreign_keys = ON") 
         return conn
     except sqlite3.Error as e:
@@ -25,32 +26,27 @@ def connect_db(parent=None):
 def create_and_populate_tables(conn):
     """
     Cria as tabelas do sistema e popula com dados iniciais se estiverem vazias.
-    Inclui lógica de retrocompatibilidade para novas colunas.
+    Utiliza nomes de coluna curtos: codigo, preco, quantidade.
     """
     if conn is None:
         return
 
     cursor = conn.cursor()
 
-    # 1. Tabela Produtos 
-    cursor.execute("""
+    # 1. Tabela Produtos (VOLTANDO AOS NOMES DE COLUNA CURTOS: codigo, preco, quantidade)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS Produtos (
-            codigo TEXT PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT UNIQUE NOT NULL,             -- Nome Curto
             nome TEXT NOT NULL,
-            preco REAL NOT NULL,
-            quantidade REAL DEFAULT 0, 
-            tipo_medicao TEXT NOT NULL, 
-            categoria TEXT NOT NULL 
-        )
+            preco REAL NOT NULL,                    -- Nome Curto
+            quantidade REAL NOT NULL DEFAULT 0,     -- Nome Curto
+            tipo_medicao TEXT NOT NULL DEFAULT 'Unidade', 
+            categoria TEXT NOT NULL,                -- Necessário para o insert
+            ativo INTEGER NOT NULL DEFAULT 1 
+        );
     """)
     
-    # Retrocompatibilidade: Adiciona a coluna 'quantidade' (estoque) se não existir
-    try:
-        cursor.execute("SELECT quantidade FROM Produtos LIMIT 1")
-    except sqlite3.OperationalError:
-        cursor.execute("ALTER TABLE Produtos ADD COLUMN quantidade REAL DEFAULT 0")
-        print("LOG: Coluna 'quantidade' adicionada à tabela 'Produtos'.")
-
     # 2. Tabela Funcionarios
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Funcionarios (
@@ -77,21 +73,7 @@ def create_and_populate_tables(conn):
         )
     """)
     
-    # Retrocompatibilidade para Vendas: id_funcionario
-    try:
-        cursor.execute("SELECT id_funcionario FROM Vendas LIMIT 1")
-    except sqlite3.OperationalError:
-        cursor.execute("ALTER TABLE Vendas ADD COLUMN id_funcionario INTEGER")
-        print("LOG: Coluna 'id_funcionario' adicionada à tabela 'Vendas'.")
-        
-    # Retrocompatibilidade para Vendas: vendedor_nome
-    try:
-        cursor.execute("SELECT vendedor_nome FROM Vendas LIMIT 1")
-    except sqlite3.OperationalError:
-        cursor.execute("ALTER TABLE Vendas ADD COLUMN vendedor_nome TEXT")
-        print("LOG: Coluna 'vendedor_nome' adicionada à tabela 'Vendas'.")
-
-    # 4. Tabela ItensVenda
+    # 4. Tabela ItensVenda (FOREIGN KEY CORRIGIDA para Produtos(codigo))
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS ItensVenda (
             item_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,7 +83,7 @@ def create_and_populate_tables(conn):
             quantidade REAL NOT NULL,
             preco_unitario REAL NOT NULL,
             FOREIGN KEY (venda_id) REFERENCES Vendas(venda_id),
-            FOREIGN KEY (produto_codigo) REFERENCES Produtos(codigo)
+            FOREIGN KEY (produto_codigo) REFERENCES Produtos(codigo) -- CORRIGIDO PARA codigo
         )
     """)
 
@@ -111,6 +93,7 @@ def create_and_populate_tables(conn):
     cursor.execute("SELECT COUNT(*) FROM Produtos")
     if cursor.fetchone()[0] == 0:
         produtos_iniciais = [
+            # (codigo, nome, preco, quantidade, tipo_medicao, categoria)
             ('001', 'Refrigerante Cola 2L', 7.50, 50.0, 'Unidade', 'Bebidas'),
             ('002', 'Pão Francês', 15.99, 10.0, 'Peso', 'Padaria'),
             ('003', 'Chocolate Barra 90g', 5.00, 100.0, 'Unidade', 'Doces'),
@@ -121,7 +104,9 @@ def create_and_populate_tables(conn):
         ]
         
         cursor.executemany("""
-            INSERT INTO Produtos (codigo, nome, preco, quantidade, tipo_medicao, categoria) 
+            INSERT INTO Produtos (
+                codigo, nome, preco, quantidade, tipo_medicao, categoria -- Nomes curtos
+            ) 
             VALUES (?, ?, ?, ?, ?, ?)
         """, produtos_iniciais)
         print("LOG: Produtos iniciais populados.")
@@ -134,32 +119,24 @@ def create_and_populate_tables(conn):
             INSERT INTO Funcionarios (nome, login, senha_hash, cargo, data_cadastro) 
             VALUES (?, ?, ?, ?, ?)
         """, admin_data)
-        print("LOG: Administrador inicial (admin/123) criado.")
+        print("LOG: Administrador inicial (admin) criado.")
 
     conn.commit()
 
-
-# --- FUNÇÃO DE DECREMENTO DE ESTOQUE E FINALIZAÇÃO DE VENDA ---
-
-import datetime
-# ... (outros imports)
+# --- FUNÇÕES DE DECREMENTO DE ESTOQUE E FINALIZAÇÃO DE VENDA ---
 
 def finalizar_venda(db_conn, itens_venda, total, recebido, troco, id_funcionario, vendedor_nome): 
-    # Adicionado o 'vendedor_nome' para manter a assinatura correta
+    """Registra a venda e os itens vendidos."""
     
-    # ⬇️ ⭐️ CÓDIGO FALTANTE: DEFINIR CURSOR ⭐️ ⬇️
     cursor = db_conn.cursor() 
-    # ⬆️ ⭐️ FIM DO CÓDIGO FALTANTE ⭐️ ⬆️
 
     try:
         # 1. Inserir na tabela Vendas
         cursor.execute("""
             INSERT INTO Vendas (data_hora, total_venda, valor_recebido, troco, id_funcionario, vendedor_nome)
             VALUES (?, ?, ?, ?, ?, ?)
-            """, (datetime.datetime.now(), total, recebido, troco, id_funcionario, vendedor_nome))
+            """, (dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), total, recebido, troco, id_funcionario, vendedor_nome))
             
-        # 2. Obter o ID da última linha inserida
-        # O SQLite usa lastrowid para obter o ID da última inserção na tabela
         venda_id = cursor.lastrowid 
 
         if venda_id is None:
@@ -168,25 +145,18 @@ def finalizar_venda(db_conn, itens_venda, total, recebido, troco, id_funcionario
         # 3. Preparar dados para ItensVenda
         itens_venda_data = []
         for codigo, nome, quantidade, preco in itens_venda:
-            # Note: Precisa incluir o venda_id para cada item
             itens_venda_data.append((venda_id, codigo, nome, quantidade, preco)) 
             
-            # ⭐️ Lógica de Decremento de Estoque (Se aplicável) ⭐️
-            # cursor.execute("UPDATE Produtos SET estoque = estoque - ? WHERE codigo = ?", (quantidade, codigo))
-
-
         # 4. Inserir na tabela ItensVenda
         cursor.executemany("""
-            INSERT INTO ItensVenda (venda_id, codigo_produto, nome_produto, quantidade, preco_unitario)
+            INSERT INTO ItensVenda (venda_id, produto_codigo, nome_produto, quantidade, preco_unitario)
             VALUES (?, ?, ?, ?, ?)
             """, itens_venda_data)
         
-        # 5. Commit e Retorno
-        db_conn.commit()
+        db_conn.commit() 
         return venda_id 
 
     except Exception as e:
-        # Se algo falhar, faz rollback
         db_conn.rollback()
         print(f"Erro ao finalizar venda: {e}")
         return None
@@ -204,9 +174,46 @@ def get_all_products(conn):
     if conn is None:
         return []
     cursor = conn.cursor()
+    # ⭐️ Nomes Curto na Seleção ⭐️
     cursor.execute("""
         SELECT codigo, nome, preco, quantidade, tipo_medicao, categoria 
         FROM Produtos 
         ORDER BY nome
     """)
     return cursor.fetchall()
+
+def update_stock_after_sale(conn, cart_items):
+    """
+    Subtrai a quantidade vendida do estoque de cada produto.
+    Assume que 'cart_items' são dicionários com 'codigo', 'quantidade', 'nome'.
+    """
+    
+    cursor = conn.cursor()
+    low_stock_alerts = []
+    
+    for item in cart_items:
+        # Assumimos que o carrinho fornece 'codigo' que é o codigo do DB
+        product_code = item['codigo'] 
+        quantity_sold = item['quantidade']
+        product_name = item['nome']
+        
+        # 1. Subtrai a quantidade vendida (Usando codigo)
+        cursor.execute("""
+            UPDATE Produtos 
+            SET quantidade = quantidade - ? 
+            WHERE codigo = ?; 
+        """, (quantity_sold, product_code))
+        
+        # 2. Verifica o nível de estoque após a baixa
+        cursor.execute("SELECT quantidade FROM Produtos WHERE codigo = ?", (product_code,))
+        
+        result = cursor.fetchone()
+        if result is None:
+             raise Exception(f"Produto não encontrado no DB durante a baixa de estoque: Código {product_code}")
+             
+        current_stock = result[0]
+        
+        if current_stock <= LOW_STOCK_THRESHOLD:
+            low_stock_alerts.append(f"⚠️ {product_name}: Apenas {current_stock} em estoque!")
+            
+    return low_stock_alerts
