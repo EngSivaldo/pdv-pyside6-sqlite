@@ -1,30 +1,38 @@
-# core/cart_logic.py - VERSÃO CORRIGIDA E FINALIZADA
-
 class CartManager:
     """Gerencia a lista de itens no carrinho, os cálculos de total e a manipulação (adição/remoção)."""
     
     def __init__(self):
         self.cart_items = []
 
-    # ALTERAÇÃO PRINCIPAL: Adicionado o parâmetro 'quantity' (padrão 1.0)
+    # VERSÃO CORRIGIDA E FINALIZADA DO add_item
     def add_item(self, product_data: tuple, quantity: float = 1.0):
-        """Adiciona ou incrementa um item no carrinho com a quantidade especificada."""
-        codigo, nome, preco, tipo = product_data[:4] 
+        """
+        Adiciona ou incrementa um item no carrinho. Soma apenas se for "Unidade".
+        product_data: (codigo, nome, preco, tipo_medicao, ...)
+        """
+        # A tupla product_data vem da busca: (codigo, nome, preco, tipo_medicao, categoria)
+        codigo, nome, preco, tipo_medicao = product_data[:4] 
         
-        found_in_cart = False
-        for item in self.cart_items:
-            if item['codigo'] == codigo:
-                item['quantidade'] += quantity
-                found_in_cart = True
-                break
+        # 1. Tenta encontrar item, MAS SÓ SOMA SE FOR UNIDADE
+        found_and_summed = False
         
-        if not found_in_cart:
+        if tipo_medicao.lower() == 'unidade':
+            for i, item in enumerate(self.cart_items):
+                # Usamos o código para identificar se já está no carrinho
+                if item['codigo'] == codigo: 
+                    self.cart_items[i]['quantidade'] += quantity
+                    found_and_summed = True
+                    break
+        
+        # 2. SE NÃO ENCONTROU OU SE FOR PESO (Deve ser uma nova linha)
+        if not found_and_summed:
+            # Note que 'tipo' foi renomeado para 'tipo_medicao' para consistência
             self.cart_items.append({
                 'codigo': codigo, 
                 'nome': nome, 
                 'preco': preco, 
                 'quantidade': quantity,
-                'tipo': tipo
+                'tipo_medicao': tipo_medicao
             })
             
     def remove_item(self, codigo: str):
@@ -45,6 +53,8 @@ class CartManager:
 
     def calculate_total(self) -> float:
         """Calcula a soma total dos itens no carrinho (preço * quantidade)."""
+        # O calculate_total funciona perfeitamente, pois o total já foi calculado implicitamente
+        # pela multiplicação do preco * quantidade (peso ou unidade)
         return sum(item['preco'] * item['quantidade'] for item in self.cart_items)
 
     def clear_cart(self):
@@ -52,7 +62,10 @@ class CartManager:
         self.cart_items = []
         
     def update_quantity(self, codigo: str, nova_quantidade: float):
-        """Atualiza a quantidade de um item no carrinho. Remove o item se a nova quantidade for <= 0."""
+        """
+        Atualiza a quantidade de um item no carrinho. Remove o item se a nova quantidade for <= 0.
+        Este método deve ser usado com cautela em itens por peso, pois normalmente o peso não é alterado manualmente.
+        """
         if nova_quantidade <= 0:
             # Se a nova quantidade for zero ou negativa, remove o item
             self.cart_items = [item for item in self.cart_items if item['codigo'] != codigo]

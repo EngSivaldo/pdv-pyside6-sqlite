@@ -27,6 +27,8 @@ from .gerenciar_funcionarios_dialog import GerenciarFuncionariosDialog
 from ui.gerenciar_produtos_dialog import GerenciarProdutosDialog
 from ui.relatorios_vendas_dialog import RelatoriosVendasDialog 
 from core.database import finalizar_venda, update_stock_after_sale
+from ui.weight_input_product_dialog import WeightInputProductDialog 
+from ui.product_selection_dialog import ProductSelectionDialog
 # ----------------------------------------------------
 # --- FUNÇÕES DE NORMALIZAÇÃO PARA BUSCA (PDV) ---
 # ----------------------------------------------------
@@ -43,12 +45,18 @@ def normalize_text(text):
     return normalized.lower()
 
 def clean_for_comparison(text):
-    """Remove caracteres especiais, espaços e pontuações do texto normalizado."""
-    normalized = normalize_text(text)
-    # Remove qualquer coisa que não seja letra ou número (a-z, 0-9)
-    cleaned = re.sub(r'[^a-z0-9]', '', normalized) 
-    return cleaned
-
+    """Remove acentos, pontuações e converte para minúsculas."""
+    import re
+    if text is None: return ""
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text) # Remove pontuação
+    text = re.sub(r'[áàãâä]', 'a', text)
+    text = re.sub(r'[éèêë]', 'e', text)
+    text = re.sub(r'[íìîï]', 'i', text)
+    text = re.sub(r'[óòõôö]', 'o', text)
+    text = re.sub(r'[úùûü]', 'u', text)
+    text = re.sub(r'[ç]', 'c', text)
+    return text.strip()
 
 # ----------------------------------------------------
 # --- CLASSE PRINCIPAL PDVWindow ---
@@ -229,49 +237,76 @@ class PDVWindow(QMainWindow):
         # Conecta o completer ao campo de entrada
         self.search_input.setCompleter(completer)
 
-    def _show_quantity_dialog(self, product_data):
-        """
-        Abre um diálogo para confirmar e alterar a quantidade/peso do produto.
-        Retorna a nova quantidade (float), ou None se cancelado.
-        
-        Atenção: product_data[3] agora é 'tipo_medicao'.
-        """
-        
-        # Cria uma instância do QInputDialog e remove temporariamente o stylesheet
-        dialog = QInputDialog(self)
-        dialog.setStyleSheet("") 
-        
-        # O product_data é a tupla de 5 elementos: (codigo, nome, preco, tipo_medicao, categoria)
-        nome_produto = product_data[1]
-        # Usamos o índice 3, que agora é tipo_medicao
-        tipo_produto = product_data[3] if product_data[3] is not None else 'Unidade' 
-        
-        if tipo_produto.lower() == 'peso': 
-            label = f"Digite o PESO para {nome_produto} (Kg):"
-            initial_value = 1.000
-            
-            new_quantity, ok = dialog.getDouble(
-                dialog, "Confirmar Peso/Quantidade", label, 
-                value=initial_value, decimals=3 
-            )
-        else:
-            label = f"Digite a QUANTIDADE para {nome_produto}:"
-            initial_value = 1
-            new_quantity, ok = dialog.getInt(
-                dialog, "Confirmar Quantidade", label, 
-                value=initial_value
-            )
+    # Certifique-se de importar:
+# from ui.product_selection_dialog import ProductSelectionDialog
+# from ui.weight_input_product_dialog import WeightInputProductDialog
+# import re
+    from PySide6.QtWidgets import QDialog # Import necessário
 
-        if ok and new_quantity > 0:
-            return float(new_quantity) # Garante que o retorno é float
+    # Função auxiliar para normalização (fora da classe)
+    def clean_for_comparison(text):
+        """Remove acentos, pontuações e converte para minúsculas."""
+        import re
+        if text is None: return ""
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', '', text) # Remove pontuação
+        text = re.sub(r'[áàãâä]', 'a', text)
+        text = re.sub(r'[éèêë]', 'e', text)
+        text = re.sub(r'[íìîï]', 'i', text)
+        text = re.sub(r'[óòõôö]', 'o', text)
+        text = re.sub(r'[úùûü]', 'u', text)
+        text = re.sub(r'[ç]', 'c', text)
+        return text.strip()
+
+# Dentro da classe PDVWindow:
+
+    def _show_selection_dialog(self, matching_products: list):
+        """Chama o diálogo de seleção de produto para resolver a ambiguidade."""
+        dialog = ProductSelectionDialog(matching_products, parent=self)
         
-        return None
-    
+        if dialog.exec() == QDialog.Accepted:
+            return dialog.get_selected_product()
+        else:
+            return None
+
+    def _show_quantity_dialog(self, product_data: tuple) -> float | None:
+        """
+        Decide qual diálogo de quantidade usar (Peso ou Unidade Padrão) 
+        e retorna a quantidade final.
+        """
+        # A tupla product_data é: (codigo, nome, preco, tipo_medicao, categoria)
+        
+        # Se o tipo de medição for 'Peso', chama o diálogo de peso
+        if product_data[3].lower() == 'peso':
+            dialog = WeightInputProductDialog(
+                product_name=product_data[1],  # nome
+                product_price=product_data[2], # preco
+                parent=self
+            )
+            
+            if dialog.exec() == QDialog.Accepted:
+                # Retorna a quantidade (peso)
+                weight_qty, _ = dialog.get_weight_and_total()
+                return weight_qty
+            else:
+                # Usuário cancelou a entrada de peso
+                return None
+        
+        else:
+            # Para "Unidade" ou qualquer outro, retorna 1 (Unidade Padrão)
+            # O sistema pode ser expandido para chamar um diálogo de entrada 
+            # de quantidade simples aqui, se necessário.
+            return 1.0 # Adiciona 1 unidade por padrão
+        
     def _handle_add_item(self):
         """
         Lida com a adição de item ao carrinho, incluindo busca exata, busca por código 
-        limpo/nome limpo e tratamento de ambiguidade (múltiplos matches).
+        limpo/nome limpo e tratamento de ambiguidade (múltiplos matches) e 
+        lançamento de peso.
         """
+        from PySide6.QtWidgets import QMessageBox, QDialog
+        from ui.weight_input_product_dialog import WeightInputProductDialog
+        
         search_text = self.search_input.text().strip()
         if not search_text:
             QMessageBox.warning(self, "Aviso", "Por favor, digite o código ou o nome do produto.")
@@ -286,27 +321,23 @@ class PDVWindow(QMainWindow):
             cursor = self.db_connection.cursor()
             
             # 2. Busca por Código Exato (Prioridade Máxima)
-            # CORRIGIDO: Selecionando as 5 colunas da nova estrutura
+            # Tupla: (codigo, nome, preco, tipo_medicao, categoria)
             cursor.execute("SELECT codigo, nome, preco, tipo_medicao, categoria FROM Produtos WHERE codigo = ?", (search_text,))
             product_data = cursor.fetchone()
 
             # 3. Busca Parcial (se não encontrou por código exato)
             if not product_data:
-                # CORRIGIDO: Selecionando as 5 colunas da nova estrutura
                 cursor.execute("SELECT codigo, nome, preco, tipo_medicao, categoria FROM Produtos")
                 all_products = cursor.fetchall()
                 
                 matching_products = []
                 
                 for row in all_products:
-                    # CORRIGIDO: Desempacotando as 5 colunas
                     codigo, nome, preco, tipo_medicao, categoria = row
                     
-                    # Normaliza o nome e o código do produto no BD para comparação
                     normalized_name_db = clean_for_comparison(nome)
                     normalized_codigo_db = clean_for_comparison(codigo)
                     
-                    # Verifica se o texto normalizado de busca está CONTIDO no código OU no nome normalizado do BD
                     if normalized_search in normalized_codigo_db or normalized_search in normalized_name_db:
                         matching_products.append(row)
 
@@ -317,42 +348,56 @@ class PDVWindow(QMainWindow):
                 
                 elif len(matching_products) > 1:
                     # Encontrou múltiplos matches (ambiguidade)
-                    
-                    # ⭐️ 1. Chama a nova função de seleção (vamos criá-la logo abaixo)
                     selected_product = self._show_selection_dialog(matching_products)
                     
                     if selected_product:
-                        # Se o usuário escolheu, product_data recebe o item escolhido
                         product_data = selected_product 
-                        # O fluxo continua para o Passo 4 (Lógica de Adição)
-                        
                     else:
-                        # Se o usuário cancelou o diálogo de seleção, limpamos e saímos.
+                        # Usuário cancelou a seleção
                         self.search_input.clear() 
                         self.search_input.setFocus()
-                        return # Sai da função sem adicionar nada
-                    
-            # 4. Lógica de Adição (executada APENAS se product_data for encontrado e não for ambíguo)
+                        return # Sai da função
+
+            # 4. Lógica de Adição (executada APENAS se product_data for encontrado)
             if product_data:
                 
-                # Chama o diálogo de quantidade (usa product_data[3], que agora é tipo_medicao)
-                new_quantity = self._show_quantity_dialog(product_data)
-
-                if new_quantity is not None:
-                    # Passa a tupla de 5 elementos para o CartManager. 
-                    # Assumimos que o CartManager usa o 4º elemento (índice 3: tipo_medicao) como 'tipo'.
-                    self.cart_manager.add_item(
-                        product_data, 
-                        quantity=new_quantity 
+                # ⭐️ INÍCIO DA NOVA LÓGICA DE PESO/UNIDADE ⭐️
+                codigo, nome, preco, tipo_medicao, categoria = product_data
+                
+                quantity = 1.0 # Padrão para Unidade
+                
+                if tipo_medicao.lower() == 'peso':
+                    # Chama o diálogo de entrada de peso
+                    dialog = WeightInputProductDialog(
+                        product_name=nome, 
+                        product_price=preco
                     )
                     
-                    self.search_input.clear()
-                    total = self.cart_manager.calculate_total()
-                    self._update_total_display(total)
-                    self._update_cart_table() 
+                    if dialog.exec() == QDialog.Accepted:
+                        # Se aceito, pega o peso (quantidade)
+                        quantity, _ = dialog.get_weight_and_total()
+                    else:
+                        # Usuário cancelou a entrada de peso, cancelamos a adição
+                        self.search_input.clear()
+                        self.search_input.setFocus()
+                        return
+                
+                # Se for unidade, a quantity continua 1.0. Se for peso, quantity é o peso inserido.
+                
+                # 5. ADICIONA O ITEM AO CARRINHO
+                # O CartManager deve ser adaptado para CALCULAR O TOTAL (preco * quantity)
+                self.cart_manager.add_item(
+                    product_data, 
+                    quantity=quantity 
+                )
+                
+                self.search_input.clear()
+                total = self.cart_manager.calculate_total()
+                self._update_total_display(total)
+                self._update_cart_table() 
             
             else:
-                # Se não encontrou nem por código exato, nem por nome único
+                # Se não encontrou nada
                 QMessageBox.critical(self, "Erro", f"Produto com código/nome '{search_text}' não encontrado.")
 
         self.search_input.setFocus()
@@ -372,6 +417,18 @@ class PDVWindow(QMainWindow):
 
         self.search_input.clear()
         self.search_input.setFocus()
+    
+    def _show_selection_dialog(self, matching_products: list):
+        """
+        Chama o diálogo de seleção de produto para resolver a ambiguidade 
+        e retorna a tupla do produto escolhido.
+        """
+        dialog = ProductSelectionDialog(matching_products, parent=self)
+        
+        if dialog.exec() == QDialog.Accepted:
+            return dialog.get_selected_product()
+        else:
+            return None
 
 
     # Substitua este método inteiro pelo código abaixo:
@@ -401,15 +458,16 @@ class PDVWindow(QMainWindow):
                 QMessageBox.critical(self, "Erro", "Dados do funcionário logado incompletos. Venda não registrada.")
                 return
                 
-            # ⭐️ PREPARAÇÃO DOS DADOS: Usamos a lista de dicionários para a baixa de estoque ⭐️
+            # ⭐️ PREPARAÇÃO DOS DADOS: Usamos a lista de dicionários do CartManager ⭐️
             cart_items_for_stock = self.cart_manager.cart_items 
             
-            # Lista de tuplas formatada para a função finalizar_venda (como você já usava)
+            # ⭐️ CORREÇÃO: A lista agora contém 5 elementos (incluindo tipo_medicao) para uso na impressão e registro ⭐️
             itens_venda_para_registro = [(
                 item['codigo'], 
                 item['nome'], 
                 item['quantidade'], 
-                item['preco']
+                item['preco'],
+                item.get('tipo_medicao', 'Unidade') # ✅ Novo: Inclui o tipo de medição (kg ou unidade)
             ) for item in cart_items_for_stock]
 
             conn = self.db_connection
@@ -417,10 +475,11 @@ class PDVWindow(QMainWindow):
             
             try:
                 # 1. ATUALIZA O ESTOQUE
-                # A função usará 'codigo' e 'quantidade' de cada item para a baixa
+                # A função update_stock_after_sale provavelmente ainda usa a lista de dicionários
                 low_stock_alerts = update_stock_after_sale(conn, cart_items_for_stock) 
                 
                 # 2. REGISTRA A VENDA E ITENS
+                # FINALIZAR VENDA agora recebe a tupla de 5 elementos (ajuste a função finalizar_venda se necessário)
                 venda_id = finalizar_venda(
                     conn,
                     itens_venda_para_registro, 
@@ -432,7 +491,6 @@ class PDVWindow(QMainWindow):
                 )
                 
                 if not isinstance(venda_id, int) or venda_id is None:
-                    # Se finalizar_venda retornar um ID inválido, forçamos o erro para o rollback
                     raise Exception("Falha ao obter o ID da venda.")
                 
                 # 3. CONFIRMA A TRANSAÇÃO: Se chegou aqui, tudo está OK no DB
@@ -445,7 +503,8 @@ class PDVWindow(QMainWindow):
                     QMessageBox.warning(self, "ALERTA DE ESTOQUE BAIXO", 
                                         "Os seguintes produtos estão com estoque crítico:\n" + "\n".join(low_stock_alerts))
                     
-                self._show_print_dialog(venda_id, total, received, troco, itens_venda_para_registro) 
+                # ⭐️ CHAMADA DO RECIBO: Envia a lista de tuplas de 5 elementos ⭐️
+                self._generate_and_print_receipt(venda_id, total, received, troco, itens_venda_para_registro) 
                 
                 # Limpa a interface
                 self.cart_manager.clear_cart()
@@ -824,43 +883,66 @@ class PDVWindow(QMainWindow):
             # 2. Se o usuário escolher imprimir, chama a função de geração de recibo
             self._generate_and_print_receipt(venda_id, total, recebido, troco, itens_venda)
             
+    import datetime # Certifique-se de que isso está importado no seu arquivo
+
     def _generate_and_print_receipt(self, venda_id, total, recebido, troco, itens_venda):
         """
-        (Função Placeholder)
-        Aqui é onde a lógica de geração de PDF ou HTML do recibo seria implementada.
+        Gera o texto do recibo, incluindo a formatação 'kg' para produtos por peso.
         """
-        # Exemplo de dados:
+        
         vendedor = self.logged_user['nome']
         data_hora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-        # Em um sistema real, você usaria bibliotecas como ReportLab (PDF) ou 
-        # PySide6's QPrinter/QTextDocument (para HTML/texto formatado) aqui.
+        # Garante que os floats sejam formatados corretamente para o padrão brasileiro no final
+        def format_br(value):
+            # Corrigido: usa o padrão de formatação de moeda brasileira (R$ 1.000,00)
+            return f"{value:,.2f}".replace('.', '#').replace(',', '.').replace('#', ',')
 
         recibo_texto = f"""
-        ========================================
-             RECIBO DE VENDA - PDV
-        ========================================
-        Venda ID: {venda_id}
-        Data/Hora: {data_hora}
-        Vendedor: {vendedor}
-        ----------------------------------------
-        PRODUTO       QTD   PREÇO UN.   SUBTOTAL
-        ----------------------------------------"""
+    ========================================
+        RECIBO DE VENDA - PDV
+    ========================================
+    Venda ID: {venda_id}
+    Data/Hora: {data_hora}
+    Vendedor: {vendedor}
+    ----------------------------------------
+    PRODUTO            QTD    PREÇO UN.   SUBTOTAL
+    ----------------------------------------"""
 
-        for codigo, nome, qtd, preco in itens_venda:
+        # ⭐️ CORREÇÃO ESSENCIAL: Desempacotamento da tupla de 5 elementos ⭐️
+        # O 'itens_venda' agora é uma lista de (codigo, nome, qtd, preco, tipo_medicao)
+        for codigo, nome, qtd, preco, tipo_medicao in itens_venda: 
+            
             subtotal = qtd * preco
-            recibo_texto += f"\n{nome[:15].ljust(15)} {qtd:5.2f} {preco:10.2f} {subtotal:10.2f}"
+            
+            # 2. Lógica para formatar a Quantidade (QTD)
+            if tipo_medicao.lower() == 'peso':
+                # Usa 3 casas decimais e anexa " kg" para peso
+                qtd_formatada = f"{qtd:7.3f} kg" 
+            else:
+                # Usa 2 casas decimais para unidades
+                qtd_formatada = f"{qtd:10.2f}" 
+
+            # 3. Formatação da Linha
+            # Nome (largura 17), QTD (largura 12, que agora inclui o 'kg'), PREÇO (largura 10), SUBTOTAL (largura 10)
+            recibo_texto += (
+                f"\n{nome[:17].ljust(17)} "
+                f"{qtd_formatada.ljust(12)}" 
+                f"{preco:10.2f} "
+                f"{subtotal:10.2f}"
+            )
+
+        # ----------------------------------------
 
         recibo_texto += f"""
-        ----------------------------------------
-        TOTAL: R$ {total:,.2f}
-        RECEBIDO: R$ {recebido:,.2f}
-        TROCO: R$ {troco:,.2f}
-        ========================================
-        """
+    ----------------------------------------
+    TOTAL: R$ {format_br(total)}
+    RECEBIDO: R$ {format_br(recebido)}
+    TROCO: R$ {format_br(troco)}
+    ========================================
+    """
 
         QMessageBox.information(self, "Impressão (Simulada)", f"Recibo gerado com sucesso. O texto abaixo seria enviado para a impressora:\n\n{recibo_texto}")
-        
 # No seu MainWindow ou onde você chama o relatório:
 
     def open_sales_report(self):

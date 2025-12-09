@@ -17,8 +17,20 @@ class AdjustStockDialog(QDialog):
     def setup_ui(self, product_name):
         main_layout = QVBoxLayout(self)
         
-        main_layout.addWidget(QLabel(f"Produto: **{product_name}**"))
-        main_layout.addWidget(QLabel(f"Estoque Atual: **{self.current_qty:,.2f}**"))
+        # ⭐️ CORREÇÃO/MELHORIA: Usando HTML explícito para garantir o negrito 
+        # (melhor que tentar adivinhar a formatação do QLabel)
+        
+        # Produto
+        product_label = QLabel(f"Produto: <strong>{product_name}</strong>")
+        product_label.setTextFormat(Qt.TextFormat.RichText)
+        main_layout.addWidget(product_label)
+        
+        # Estoque Atual
+        # Formatação de número melhorada para o display
+        current_qty_str = f"{self.current_qty:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        qty_label = QLabel(f"Estoque Atual: <strong>{current_qty_str}</strong>")
+        qty_label.setTextFormat(Qt.TextFormat.RichText)
+        main_layout.addWidget(qty_label)
         
         # Campo para o ajuste (adição ou subtração)
         qty_layout = QHBoxLayout()

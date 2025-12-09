@@ -125,6 +125,10 @@ def create_and_populate_tables(conn):
 
 # --- FUNÇÕES DE DECREMENTO DE ESTOQUE E FINALIZAÇÃO DE VENDA ---
 
+# ARQUIVO: core/database.py
+
+import datetime as dt # Certifique-se de que o import está correto no topo do arquivo!
+
 def finalizar_venda(db_conn, itens_venda, total, recebido, troco, id_funcionario, vendedor_nome): 
     """Registra a venda e os itens vendidos."""
     
@@ -144,15 +148,24 @@ def finalizar_venda(db_conn, itens_venda, total, recebido, troco, id_funcionario
 
         # 3. Preparar dados para ItensVenda
         itens_venda_data = []
-        for codigo, nome, quantidade, preco in itens_venda:
+        
+        # ⭐️ CORREÇÃO ESSENCIAL AQUI: Receber os 5 valores da tupla (inclui tipo_medicao) ⭐️
+        for codigo, nome, quantidade, preco, tipo_medicao in itens_venda:
+            
+            # O tipo_medicao é ignorado aqui, pois a tabela ItensVenda só precisa dos 5 campos:
+            # (venda_id, produto_codigo, nome_produto, quantidade, preco_unitario)
             itens_venda_data.append((venda_id, codigo, nome, quantidade, preco)) 
             
         # 4. Inserir na tabela ItensVenda
+        # Esta instrução SQL ainda espera os 5 valores corretos (venda_id + 4 detalhes do produto)
         cursor.executemany("""
             INSERT INTO ItensVenda (venda_id, produto_codigo, nome_produto, quantidade, preco_unitario)
             VALUES (?, ?, ?, ?, ?)
             """, itens_venda_data)
         
+        # 5. Commit e retorno
+        # O commit deve ser feito pelo gerenciador de transação, se o chamador (handle_finalize_sale) for o responsável.
+        # Mas, se esta função é responsável pelo commit local, o código está correto:
         db_conn.commit() 
         return venda_id 
 

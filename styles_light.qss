@@ -38,6 +38,7 @@ QPushButton {
     padding: 12px;
     border-radius: 4px;
     font-weight: 500;
+    /* REMOVIDO: transition (Não suportado pelo QSS) */
 }
 
 QPushButton:hover {
@@ -71,13 +72,13 @@ QPushButton[text*="FINALIZAR"] {
     font-weight: 900;
     padding: 20px;
     border-radius: 8px;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    /* REMOVIDO: box-shadow (Não suportado pelo QSS) */
 }
 QPushButton[text*="FINALIZAR"]:hover {
     background-color: #00897B;
 }
 
-/* ==================== TABELA (QTableView) ==================== */
+/* ==================== TABELA (QTableView) e Cabeçalhos ==================== */
 
 QTableView {
     background-color: #FFFFFF; /* Fundo da tabela branco */
@@ -112,7 +113,7 @@ QTableView QAbstractItemView::item:selected {
 
 /* ==================== DISPLAY DE TOTAL (Foco Máximo) ==================== */
 
-#totalDisplay { /* Seletor usando o objectName */
+QLabel#totalDisplay { /* Seletor usando o objectName */
     background-color: #00796B; /* Teal escuro */
     color: #FFFFFF; /* Texto branco */
     padding: 30px;
