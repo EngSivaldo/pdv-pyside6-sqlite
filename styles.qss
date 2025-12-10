@@ -1,6 +1,6 @@
-/* styles.qss - Tema Clean Commerce Dark Profissional */
+/* styles.qss - Tema Clean Commerce Dark Profissional (Padronizado) */
 
-/* ==================== BASE GERAL (Foco na Legibilidade) ==================== */
+/* ==================== BASE GERAL E PADRÕES (Clean Dark) ==================== */
 
 QWidget {
     background-color: #1e1e1e; /* Fundo principal escuro */
@@ -13,27 +13,33 @@ QLabel {
     color: #f0f0f0;
 }
 
-/* Campos de Input (Busca, Recebido) */
+/* Campos de Input (Padrão para QLineEdit, QDoubleSpinBox, QSpinBox, etc.) */
 QLineEdit,
 QDoubleSpinBox,
 QSpinBox {
-    background-color: #2d2d2d; /* Fundo do campo sutilmente mais claro */
+    background-color: #2d2d2d;
     border: 1px solid #505050;
-    padding: 10px; /* Maior padding para facilitar a entrada */
+    padding: 10px;
     border-radius: 6px;
     color: #f0f0f0;
     font-size: 12pt;
 }
 
-/* Estilo para o texto selecionado dentro dos campos */
+QLineEdit:focus,
+QDoubleSpinBox:focus,
+QSpinBox:focus {
+    border: 1px solid #4caf50; /* Destaque verde ao focar */
+    background-color: #383838;
+}
+
 QLineEdit::selection,
 QDoubleSpinBox::selection,
 QSpinBox::selection {
-    background-color: #4caf50; /* Verde de sucesso */
-    color: #1e1e1e; /* Texto escuro */
+    background-color: #4caf50; 
+    color: #1e1e1e;
 }
 
-/* ==================== BOTÕES (Ação e Prioridade) ==================== */
+/* ==================== BOTÕES PADRÃO ==================== */
 
 QPushButton {
     background-color: #383838; /* Botão padrão cinza */
@@ -42,42 +48,53 @@ QPushButton {
     padding: 12px;
     border-radius: 4px;
     font-weight: 500;
-    /* REMOVIDO: transition (Não suportado pelo QSS) */
 }
 
 QPushButton:hover {
     background-color: #505050;
 }
 
-/* Botão Adicionar (Ação Positiva - Verde) */
-QPushButton[text*="Adicionar"] {
-    background-color: #4caf50; /* Verde de sucesso */
+QPushButton:pressed {
+    background-color: #6a6a6a;
+}
+
+/* --- Botão de Adição (Ação Positiva - Verde) --- */
+/* Use objectName="#addButton" ou [text*="Adicionar"] se não puder usar ID */
+QPushButton[text*="Adicionar"],
+QPushButton#addButton {
+    background-color: #4caf50;
     color: #1e1e1e;
     font-weight: bold;
 }
-QPushButton[text*="Adicionar"]:hover {
+QPushButton[text*="Adicionar"]:hover,
+QPushButton#addButton:hover {
     background-color: #66bb6a;
 }
 
-/* Botão Remover (Ação de Alerta/Reversão - Amarelo/Laranja) */
-QPushButton[text*="Remover"] {
-    background-color: #ff9800; /* Laranja de Alerta */
+/* --- Botão de Remoção (Alerta/Reversão - Laranja) --- */
+/* Use objectName="#removeButton" */
+QPushButton[text*="Remover"],
+QPushButton#removeButton {
+    background-color: #ff9800;
     color: #1e1e1e;
 }
-QPushButton[text*="Remover"]:hover {
+QPushButton[text*="Remover"]:hover,
+QPushButton#removeButton:hover {
     background-color: #ffb74d;
 }
 
-/* Botão Finalizar Venda (Ação Crítica/Pagamento) */
+/* --- Botão FINALIZAR VENDA (Ação Crítica) --- */
+/* Requer que o botão tenha objectName="finalizeSaleButton" */
+QPushButton#finalizeSaleButton,
 QPushButton[text*="FINALIZAR"] {
-    background-color: #4caf50; /* Reutiliza o verde forte */
+    background-color: #4caf50; 
     color: #1e1e1e;
     font-size: 16pt;
-    font-weight: 900; /* Extra bold */
+    font-weight: 900;
     padding: 20px;
     border-radius: 8px;
-    /* REMOVIDO: box-shadow (Não suportado pelo QSS) */
 }
+QPushButton#finalizeSaleButton:hover,
 QPushButton[text*="FINALIZAR"]:hover {
     background-color: #66bb6a;
 }
@@ -85,50 +102,47 @@ QPushButton[text*="FINALIZAR"]:hover {
 /* ==================== TABELA (QTableView) e Cabeçalhos ==================== */
 
 QTableView {
-    background-color: #252525; /* Fundo da tabela ligeiramente mais claro que o principal */
-    border: 1px solid #4caf50; /* Borda da tabela em verde sutil para foco */
+    background-color: #252525;
+    border: 1px solid #4caf50;
     color: #f0f0f0;
+    gridline-color: #3a3a3a; /* Linhas de grade mais escuras */
 }
 
-/* Estiliza o cabeçalho HORIZONTAL E VERTICAL */
 QHeaderView::section {
-    background-color: #1e1e1e; /* Cor do fundo principal */
-    color: #bbbbbb; /* Texto ligeiramente mais escuro que o normal */
+    background-color: #1e1e1e;
+    color: #bbbbbb;
     padding: 8px;
-    border-bottom: 2px solid #4caf50; /* Linha de destaque verde abaixo do cabeçalho */
+    border-bottom: 2px solid #4caf50;
     font-weight: bold;
     font-size: 12pt;
+    border-right: 1px solid #3a3a3a; /* Linha de separação entre colunas */
 }
 
-/* Estiliza a borda de CADA CÉLULA */
 QTableView::item {
-    background-color: #252525;
-    border-bottom: 1px solid #3a3a3a;
-    border-right: 1px solid #3a3a3a;
     padding: 5px;
 }
 
-/* Destaque da linha selecionada (Alto Contraste) */
+/* Destaque da linha selecionada */
 QTableView QAbstractItemView::item:selected {
-    background-color: #004d40; /* Verde escuro forte (Contraste com a linha) */
-    color: #ffffff; /* Texto branco puro */
+    background-color: #004d40;
+    color: #ffffff;
 }
 
 /* ==================== DISPLAY DE TOTAL (Foco Máximo) ==================== */
 
-QLabel#totalDisplay { /* O seletor deve ser um QLabel */
-    background-color: #4caf50; /* Verde principal para dinheiro */
-    color: #1e1e1e; /* Texto escuro no fundo claro */
+QLabel#totalDisplay { 
+    background-color: #4caf50;
+    color: #1e1e1e;
     padding: 30px;
     border-radius: 10px;
-    font-size: 52pt; /* Fonte GIGANTE */
+    font-size: 52pt;
     font-weight: 900;
-    text-align: center;
+    /* Qt trata o alinhamento via código, não QSS */
 }
 
-/* ==================== CHECKOUT DIALOG (Seletor específico) ==================== */
+/* ==================== CHECKOUT DIALOG (Padrão e Elementos) ==================== */
 
-/* Estilo para a caixa de diálogo de Checkout */
+/* Estilo do Diálogo de Checkout (QDialog) */
 QDialog {
     background-color: #2d2d2d;
     border: 3px solid #4caf50;
@@ -137,14 +151,15 @@ QDialog {
 
 /* Display de total dentro do checkout */
 QLabel#checkoutTotalDisplay {
-    color: #4caf50; /* Verde no display */
+    color: #4caf50; 
     font-size: 32pt;
     font-weight: bold;
 }
 
 /* Display de Troco */
 QLabel#trocoDisplay {
-    color: #ffffff; /* Troco final branco puro */
+    color: #ffffff;
+    font-size: 24pt; /* Aumentei um pouco */
 }
 
 /* Botão Confirmar Pagamento */
@@ -153,4 +168,20 @@ QPushButton#confirmCheckoutButton {
     color: #1e1e1e;
     font-weight: bold;
     padding: 15px;
+    border-radius: 6px;
 }
+QPushButton#confirmCheckoutButton:hover {
+    background-color: #66bb6a;
+}
+
+/* Botões da calculadora (se existirem e tiverem ID) */
+QPushButton#calculatorButton {
+    background-color: #333333;
+    color: #f0f0f0;
+    border-radius: 4px;
+    font-size: 14pt;
+}
+QPushButton#calculatorButton:hover {
+    background-color: #555555;
+}
+

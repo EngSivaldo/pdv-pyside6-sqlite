@@ -1,124 +1,152 @@
-/* styles_light.qss - Tema Clean Commerce Light */
+/* styles_light.qss - Tema Clean Commerce Light (APRIMORADO) */
 
 /* ==================== BASE GERAL (Foco na Legibilidade Clara) ==================== */
 
 QWidget {
     background-color: #F8F8F8; /* Fundo principal claro */
-    color: #333333; /* Cor padrão do texto (quase preto) */
+    color: #1A1A1A; /* Cor padrão do texto (quase preto, mais contraste) */
     font-family: 'Roboto', 'Arial', sans-serif;
     font-size: 11pt;
 }
 
 QLabel {
-    color: #333333;
+    color: #1A1A1A;
 }
 
-/* Campos de Input (Busca, Recebido) */
+/* Campos de Input (Busca, Recebido - MAIS PRESENÇA) */
 QLineEdit, QDoubleSpinBox, QSpinBox {
     background-color: #FFFFFF; /* Fundo do campo branco */
-    border: 1px solid #CCCCCC;
-    padding: 10px; 
-    border-radius: 6px;
-    color: #333333;
-    font-size: 12pt;
+    border: 1px solid #E0E0E0; /* Borda mais suave */
+    padding: 12px; /* Aumenta o padding */
+    border-radius: 8px; /* Cantos mais arredondados */
+    color: #1A1A1A;
+    font-size: 13pt; /* Fonte maior para input */
+}
+
+/* Foco no Input: Adiciona destaque visual */
+QLineEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus {
+    border: 1px solid #00796B; /* Destaque Teal ao focar */
 }
 
 /* Estilo para o texto selecionado dentro dos campos */
 QLineEdit::selection, QDoubleSpinBox::selection, QSpinBox::selection {
-    background-color: #FF9800; /* Laranja de destaque */
+    background-color: #00BCD4; /* Ciano/Teal de destaque */
     color: #FFFFFF; 
 }
 
 /* ==================== BOTÕES (Ação e Prioridade) ==================== */
 
 QPushButton {
-    background-color: #E0E0E0; /* Botão padrão cinza claro */
+    background-color: #EEEEEE; /* Botão padrão cinza muito claro */
     color: #333333;
     border: none;
-    padding: 12px;
-    border-radius: 4px;
+    padding: 15px; /* Mais padding para mais presença */
+    border-radius: 8px; /* Cantos mais arredondados */
     font-weight: 500;
-    /* REMOVIDO: transition (Não suportado pelo QSS) */
 }
 
 QPushButton:hover {
-    background-color: #CCCCCC;
+    background-color: #DDDDDD;
 }
 
 /* Botão Adicionar (Ação Positiva - Verde) */
 QPushButton[text*="Adicionar"] {
-    background-color: #4CAF50; /* Verde de sucesso */
+    background-color: #00796B; /* Mudei para Teal (combina com o Total) */
     color: #FFFFFF;
     font-weight: bold;
 }
 QPushButton[text*="Adicionar"]:hover {
-    background-color: #66BB6A;
+    background-color: #00897B;
 }
 
-/* Botão Remover (Ação de Alerta/Reversão - Laranja/Vermelho) */
+/* Botão Remover (Ação de Alerta/Reversão - Vermelho) */
 QPushButton[text*="Remover"] {
-    background-color: #F44336; /* Vermelho de Alerta */
+    background-color: #F44336; 
     color: #FFFFFF;
 }
 QPushButton[text*="Remover"]:hover {
     background-color: #E57373;
 }
 
-/* Botão Finalizar Venda (Ação Crítica/Pagamento) */
+/* Botões Secundários/Admin (Neutro/Teal Sutil) */
+/* Este seletor assume que outros botões (Consultar, Cadastrar, etc.) não usam os textos acima. */
+QPushButton[text*="Consultar"],
+QPushButton[text*="Cadastrar"],
+QPushButton[text*="Gerenciar"],
+QPushButton[text*="Relatórios"],
+QPushButton[text*="Funcionário"],
+QPushButton[text*="SAIR"] {
+    background-color: #B2DFDB; /* Teal muito claro (Cor de Accent Sutil) */
+    color: #00796B; /* Texto na cor Teal escura */
+    border: 1px solid #4DB6AC; /* Borda sutil */
+    padding: 12px;
+}
+QPushButton[text*="Consultar"]:hover,
+QPushButton[text*="Cadastrar"]:hover,
+QPushButton[text*="Gerenciar"]:hover,
+QPushButton[text*="Relatórios"]:hover,
+QPushButton[text*="Funcionário"]:hover,
+QPushButton[text*="SAIR"]:hover {
+    background-color: #80CBC4; /* Sutilmente mais escuro no hover */
+    color: #004D40;
+}
+
+/* Botão FINALIZAR VENDA (Ação Crítica/Pagamento) */
 QPushButton[text*="FINALIZAR"] {
-    background-color: #00796B; /* Teal escuro */
+    background-color: #004D40; /* Teal muito escuro (Maior contraste) */
     color: #FFFFFF;
-    font-size: 16pt;
+    font-size: 18pt; /* Maior que 16pt */
     font-weight: 900;
-    padding: 20px;
-    border-radius: 8px;
-    /* REMOVIDO: box-shadow (Não suportado pelo QSS) */
+    padding: 25px; /* Mais destaque */
+    border-radius: 12px; /* Mais arredondado */
 }
 QPushButton[text*="FINALIZAR"]:hover {
-    background-color: #00897B;
+    background-color: #00796B; /* Volta para o Teal padrão no hover */
 }
 
 /* ==================== TABELA (QTableView) e Cabeçalhos ==================== */
 
 QTableView {
-    background-color: #FFFFFF; /* Fundo da tabela branco */
-    border: 1px solid #4CAF50; 
+    background-color: #FFFFFF; 
+    border: 1px solid #DDDDDD; /* Borda mais suave */
     color: #333333;
-    gridline-color: #DDDDDD; 
+    gridline-color: #F0F0F0; /* Linhas de grade mais suaves */
+    border-radius: 8px;
+    padding: 5px;
 }
 
 /* Estiliza o cabeçalho (Header) */
 QHeaderView::section {
-    background-color: #EEEEEE; /* Fundo do cabeçalho cinza claro */
-    color: #333333; 
-    padding: 8px;
-    border-bottom: 2px solid #00796B; /* Linha de destaque Teal */
-    font-weight: bold;
-    font-size: 12pt;
+    background-color: #FFFFFF; /* Fundo branco (aparência mais clean) */
+    color: #1A1A1A; 
+    padding: 10px; /* Mais padding */
+    border: none;
+    border-bottom: 3px solid #00796B; /* Linha de destaque Teal mais grossa */
+    font-weight: 700; /* Mais negrito */
+    font-size: 13pt; /* Fonte maior */
 }
 
 /* Estiliza a borda de CADA CÉLULA */
 QTableView::item {
     background-color: #FFFFFF; 
-    border-bottom: 1px solid #EEEEEE;
-    border-right: 1px solid #EEEEEE;
-    padding: 5px;
+    border-bottom: 1px solid #F0F0F0; /* Linha divisória muito sutil */
+    border-right: 1px solid #F0F0F0;
+    padding: 8px; /* Mais padding na célula */
 }
 
 /* Destaque da linha selecionada */
 QTableView QAbstractItemView::item:selected {
-    background-color: #B2DFDB; /* Teal claro */
-    color: #333333; 
+    background-color: #E0F2F1; /* Teal extra-claro (destaque suave e moderno) */
+    color: #1A1A1A; 
 }
 
 /* ==================== DISPLAY DE TOTAL (Foco Máximo) ==================== */
 
-QLabel#totalDisplay { /* Seletor usando o objectName */
+QLabel#totalDisplay { 
     background-color: #00796B; /* Teal escuro */
-    color: #FFFFFF; /* Texto branco */
-    padding: 30px;
-    border-radius: 10px;
-    font-size: 52pt;
+    color: #FFFFFF; 
+    padding: 40px; /* Aumentei o padding */
+    border-radius: 15px; /* Cantos mais arredondados */
+    font-size: 60pt; /* Mais impactante */
     font-weight: 900;
-    text-align: center;
 }

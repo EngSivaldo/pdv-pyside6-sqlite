@@ -1,16 +1,56 @@
-# Importações (Inalteradas)
+# Importações (Atualizadas com Delegate e Locale)
 import sqlite3
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QTableView, QHeaderView, QMessageBox, 
     QHBoxLayout, QLabel, QPushButton, QDateEdit, 
-    QTableWidget, QTableWidgetItem, QGroupBox, QComboBox 
+    QTableWidget, QTableWidgetItem, QGroupBox, QComboBox, 
+    QStyledItemDelegate # NOVO: Para criar o delegate de moeda
 )
 from PySide6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
-from PySide6.QtCore import Qt, QModelIndex, QDate
+from PySide6.QtCore import Qt, QModelIndex, QDate, QLocale # NOVO: Para formatar moeda
 from PySide6.QtGui import QFont
 
+# ==============================================================================
+# CLASSE DELEGATE PARA FORMATAR VALORES MONETÁRIOS
+# ==============================================================================
+
+class CurrencyDelegate(QStyledItemDelegate):
+    """Delegate para formatar valores monetários com 2 casas decimais e alinhamento à direita."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Define a localização (pt-BR para formatação de moeda R$ 1.234,56)
+        self.locale = QLocale(QLocale.Portuguese, QLocale.Brazil)
+
+    def displayText(self, value, locale):
+        """Formata o valor exibido na célula."""
+        # Se o valor vier vazio do DB, retorna vazio
+        if value is None or value == "":
+            return ""
+            
+        try:
+            # Tenta converter o valor para float
+            number = float(value)
+            # Formata como moeda (f é float, 2 é o número de casas decimais)
+            # O prefixo R$ será adicionado pelo QLocale.
+            return f"R$ {number:.2f}".replace('.', ',') # Força a vírgula para decimal, pois o QLocale pode usar o formato global
+        except (ValueError, TypeError):
+            # Retorna o valor original se não for um número válido
+            return str(value)
+
+    def createEditor(self, parent, option, index):
+        # Desabilita a edição, pois é um campo de relatório
+        return None
+
+    def paint(self, painter, option, index):
+        # Garante o alinhamento à direita para moedas
+        option.displayAlignment = Qt.AlignRight | Qt.AlignVCenter
+        super().paint(painter, option, index)
+
+# ==============================================================================
+# CLASSE PRINCIPAL DO DIÁLOGO DE RELATÓRIOS
+# ==============================================================================
+
 class RelatoriosVendasDialog(QDialog):
-    # [__init__ e setup_db_connection inalterados]
     
     def __init__(self, db_connection, vendedor_logado=None, parent=None):
         super().__init__(parent)
@@ -122,7 +162,7 @@ class RelatoriosVendasDialog(QDialog):
         self.totals_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.totals_table.setFixedHeight(120) 
         
-        # ⭐️ NOVO: CONECTAR O CLIQUE NA CÉLULA (Apenas para Admin) ⭐️
+        # Conexão para filtro de Admin
         if not self.vendedor_logado:
             self.totals_table.cellClicked.connect(self.filter_by_vendor_from_table)
             
@@ -147,64 +187,46 @@ class RelatoriosVendasDialog(QDialog):
         self.details_table_view.setEditTriggers(QTableView.NoEditTriggers)
         main_layout.addWidget(self.details_table_view)
 
-    # ⭐️ NOVO MÉTODO: FILTRAR POR CLIQUE NA TABELA DE TOTAIS ⭐️
-    # ui/relatorios_vendas_dialog.py
-
     def filter_by_vendor_from_table(self, row, column):
         """
         Recebe o clique na tabela de totais (QTableWidget) e
         atualiza o QComboBox e o histórico de vendas.
         """
         if self.vendedor_logado:
-            # Se não for Admin, não deve estar aqui.
             return
 
-        # 1. Obtém o nome do vendedor na coluna 0 da linha clicada
         vendor_item = self.totals_table.item(row, 0)
         if not vendor_item:
             return
 
         selected_vendor_name = vendor_item.text()
-        
-        # Verifica qual é o filtro atual
-        current_index = self.vendor_select.currentIndex()
         current_filter_data = self.vendor_select.currentData()
         
         # Se o vendedor já estiver selecionado, oferece para limpar o filtro
         if current_filter_data == selected_vendor_name:
             
-            # ⭐️ NOVO: Pergunta se deseja limpar o filtro ⭐️
             reply = QMessageBox.question(self, 
-                                        "Filtro Ativo",
-                                        f"Atualmente, o filtro está em '{selected_vendor_name}'.\n\nDeseja reverter para 'Todos os Vendedores'?",
-                                        QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                                         "Filtro Ativo",
+                                         f"Atualmente, o filtro está em '{selected_vendor_name}'.\n\nDeseja reverter para 'Todos os Vendedores'?",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
             
             if reply == QMessageBox.Yes:
                 # Encontra o índice 'Todos os Vendedores' (que deve ser o índice 0)
                 index_all = self.vendor_select.findData(None) 
                 if index_all != -1:
                     self.vendor_select.setCurrentIndex(index_all) 
-                    # O currentIndexChanged fará o resto do trabalho (recarregar histórico e totais)
                 return
             
-            # Se a resposta for Não, simplesmente retorna e não faz nada.
-            return
+            return # Retorna se a resposta for Não.
 
         # 2. Se o vendedor clicado NÃO estiver selecionado, aplica o filtro:
-        
-        # Encontrar o índice do vendedor no QComboBox
         index = self.vendor_select.findText(selected_vendor_name)
         
         if index != -1:
-            # ⭐️ Atualizar o QComboBox ⭐️
-            # Mudar o índice dispara o sinal currentIndexChanged,
-            # que já está conectado a load_sales_history() e load_vendor_totals()
             self.vendor_select.setCurrentIndex(index)
         else:
-            # Isso não deve acontecer após a correção do load_vendors(), mas é um bom fallback
             QMessageBox.warning(self, "Erro de Filtro", "Vendedor não encontrado na lista de filtros do sistema.")
 
-    # [load_vendors inalterado, pois já dispara o filtro pelo QComboBox]
     def load_vendors(self):
         """Carrega todos os funcionários (Admin incluso) para o QComboBox de filtro."""
         
@@ -213,8 +235,6 @@ class RelatoriosVendasDialog(QDialog):
         
         query = QSqlQuery(self.qt_db)
         
-        # ⭐️ CORREÇÃO APLICADA AQUI ⭐️
-        # Removemos 'WHERE cargo = "vendedor"' para incluir todos os funcionários
         query.prepare("SELECT nome FROM Funcionarios ORDER BY nome")
         
         if not query.exec():
@@ -230,7 +250,10 @@ class RelatoriosVendasDialog(QDialog):
         self.vendor_select.currentIndexChanged.connect(self.load_vendor_totals)
             
     def load_sales_history(self):
-        # [CÓDIGO DE FILTRAGEM INALTERADO]
+        """
+        Carrega o histórico de vendas na QTableView, aplicando o CurrencyDelegate
+        e ajustando as larguras das colunas.
+        """
         if not self.qt_db.isOpen():
             QMessageBox.critical(self, "Erro DB", "Conexão Qt DB não está aberta.")
             return
@@ -287,9 +310,28 @@ class RelatoriosVendasDialog(QDialog):
 
         self.sales_table_view.setModel(self.model)
         
+        # ⭐️ NOVO: Instanciar e Aplicar o Delegate ⭐️
+        currency_delegate = CurrencyDelegate(self.sales_table_view)
+        
+        # Colunas 3 (Total), 4 (Recebido), 5 (Troco)
+        self.sales_table_view.setItemDelegateForColumn(3, currency_delegate)
+        self.sales_table_view.setItemDelegateForColumn(4, currency_delegate)
+        self.sales_table_view.setItemDelegateForColumn(5, currency_delegate)
+        
+        # ⭐️ CORREÇÃO: Ajustar a Largura das Colunas para evitar truncamento ⭐️
         self.sales_table_view.hideColumn(0) 
-        self.sales_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        
+        # 1. Data/Hora (Stretch)
         self.sales_table_view.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch) 
+        # 2. Vendedor (ResizeToContents)
+        self.sales_table_view.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        
+        # 3. Total (R$) - Largura Fixa para garantir o valor
+        self.sales_table_view.setColumnWidth(3, 120) 
+        # 4. Recebido (R$) - Largura Fixa
+        self.sales_table_view.setColumnWidth(4, 130) 
+        # 5. Troco (R$) - Largura Fixa
+        self.sales_table_view.setColumnWidth(5, 130) 
         
         self._calculate_total_sales()
         
@@ -350,8 +392,8 @@ class RelatoriosVendasDialog(QDialog):
             item_vendedor = QTableWidgetItem(vendedor)
             self.totals_table.setItem(row, 0, item_vendedor)
             
-            # Coluna 1: Total Vendido
-            total_formatado = f"R$ {total:.2f}"
+            # Coluna 1: Total Vendido - Já formatado com f"R$ {total:.2f}"
+            total_formatado = f"R$ {total:.2f}".replace('.', ',')
             item_total = QTableWidgetItem(total_formatado)
             item_total.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.totals_table.setItem(row, 1, item_total)
@@ -373,10 +415,13 @@ class RelatoriosVendasDialog(QDialog):
                 except (ValueError, TypeError):
                     continue
 
-        self.total_sales_label.setText(f"Total de Vendas Exibidas: R$ {total_sum:.2f}")
+        self.total_sales_label.setText(f"Total de Vendas Exibidas: R$ {total_sum:.2f}".replace('.', ',')) # Substitui ponto por vírgula no total geral
 
     def show_sale_details(self, index: QModelIndex):
-        # [CÓDIGO INALTERADO]
+        """
+        Exibe os itens da venda selecionada, aplicando o CurrencyDelegate
+        à tabela de detalhes.
+        """
         if not hasattr(self, 'details_model'):
             self.details_model = QSqlQueryModel(self)
             
@@ -413,6 +458,14 @@ class RelatoriosVendasDialog(QDialog):
         self.details_model.setHeaderData(3, Qt.Horizontal, "Subtotal (R$)")
 
         self.details_table_view.setModel(self.details_model)
+        
+        # ⭐️ NOVO: Aplicar o Delegate na Tabela de Detalhes ⭐️
+        currency_delegate = CurrencyDelegate(self.details_table_view)
+        # Coluna 2: Preço Unit. (R$)
+        self.details_table_view.setItemDelegateForColumn(2, currency_delegate) 
+        # Coluna 3: Subtotal (R$)
+        self.details_table_view.setItemDelegateForColumn(3, currency_delegate) 
+
         self.details_table_view.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.details_table_view.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.details_table_view.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)

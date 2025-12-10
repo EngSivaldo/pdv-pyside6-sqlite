@@ -5,10 +5,10 @@ import datetime
 import os 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-    QLabel, QLineEdit, QTableView, QMessageBox, QCompleter, QInputDialog, QDialog 
+    QLabel, QLineEdit, QTableView, QMessageBox, QCompleter, QInputDialog, QDialog, QApplication
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
+from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem,QKeySequence, QShortcut
 
 # IMPORTS PARA NORMALIZAÇÃO/BUSCA SEM ACENTOS
 from unidecode import unidecode
@@ -29,6 +29,11 @@ from ui.relatorios_vendas_dialog import RelatoriosVendasDialog
 from core.database import finalizar_venda, update_stock_after_sale
 from ui.weight_input_product_dialog import WeightInputProductDialog 
 from ui.product_selection_dialog import ProductSelectionDialog
+from ui.total_discount_dialog import TotalDiscountDialog
+from data.vendas_controller import VendasController
+from ui.post_sale_dialog import PostSaleDialog
+from core.printer_manager import PrinterManager 
+
 # ----------------------------------------------------
 # --- FUNÇÕES DE NORMALIZAÇÃO PARA BUSCA (PDV) ---
 # ----------------------------------------------------
@@ -63,14 +68,25 @@ def clean_for_comparison(text):
 # ----------------------------------------------------
 
 class PDVWindow(QMainWindow):
-    def __init__(self, db_connection, logged_user, parent=None): # ⭐️ CORREÇÃO 1: Aceita argumentos
+    # C:\Users\sival\Ponto de Venda\ui\main_window.py (Dentro da classe PDVWindow)
+
+    def __init__(self, db_connection, logged_user, parent=None): # db_connection é a conexão aberta, mas VendasController precisa da FUNÇÃO de conexão
         super().__init__(parent)
         
-        # ⭐️ CORREÇÃO 2: Armazena a conexão e o usuário logado 
         self.db_connection = db_connection 
         self.logged_user = logged_user 
         
-        # ⭐️ CORREÇÃO 3: Define o título com o nome e cargo do usuário logado
+        # 1.  CORREÇÃO: Inicialização dos atributos de desconto/taxa 
+        # Estes são os valores que serão definidos pelo TotalDiscountDialog e lidos em _handle_finalize_sale
+        self.total_discount_value = 0.0  
+        self.service_fee_value = 0.0     
+        
+        # 2.  CORREÇÃO: Inicialização do VendasController 
+        # Assumimos que o VendasController é inicializado sem a função connect_db, e que ele a chama internamente.
+        # Se você implementou VendasController para ACEITAR A FUNÇÃO, use: self.vendas_controller = VendasController(connect_db)
+        # Mas se ele se auto-inicializa, use:
+        self.vendas_controller = VendasController()
+        
         self.setWindowTitle(f"PDV - Usuário: {self.logged_user['nome']} ({self.logged_user['cargo'].upper()})")
         
         self.setGeometry(100, 100, 1000, 700)
@@ -80,17 +96,96 @@ class PDVWindow(QMainWindow):
         # Estado do tema (dark é o padrão styles.qss)
         self.current_theme = 'dark' 
         
-        # ❌ A lógica de connect_db() e create_and_populate_tables() foi removida daqui, 
-        # pois agora é tratada de forma centralizada no main.py, antes do login.
-        
         # --- APLICAÇÃO DO STYLESHEET ---
         self._apply_stylesheet('styles.qss') # Carrega o tema dark padrão
         # -----------------------------------------------
+        self.printer_manager = PrinterManager()
 
         self._setup_ui()
         self._setup_cart_model()
 
-    # Em ui/main_window.py, dentro do método _show_employee_registration:
+        # NOTA: O db_connection passado como argumento só é útil aqui se você
+        # for usá-lo para outras queries que não sejam de venda. 
+        # Para vendas, usamos self.vendas_controller.
+    # C:\Users\sival\Ponto de Venda\ui\main_window.py (Dentro da classe PDVWindow)
+
+    def _format_currency(self, value: float) -> str:
+        """
+        Formata um valor float para string de moeda brasileira (R$ X.XXX,XX).
+        """
+        if value is None:
+            value = 0.0
+            
+        # Formatação que substitui o ponto decimal por vírgula e adiciona separador de milhar.
+        # Ex: 1234.56 -> R$ 1.234,56
+        return f"R$ {value:,.2f}".replace('.', '#').replace(',', '.').replace('#', ',')
+
+    def _reset_cart(self):
+        """Função auxiliar para limpar e resetar a interface após a venda."""
+        self.cart_manager.clear_cart()
+        self._update_cart_table() # Atualiza a tabela do carrinho
+        self._update_total_display(0.0) # Zera o total
+        self.search_input.setFocus()
+        self.total_discount_value = 0.0 # Zera o desconto
+        self.service_fee_value = 0.0    # Zera a taxa
+        self._update_total_display(self._calculate_subtotal()) # Atualiza o total novamente
+
+    # ui/main_window.py (Métodos _print_receipt e _print_invoice)
+
+    # ui/main_window.py (Dentro de class PDVWindow:)
+
+    def _print_receipt(self, sale_id: int):
+        """Gera o recibo e simula a impressão (console/log)."""
+        
+        # ⭐️ CORREÇÃO: Usar o nome correto das variáveis inicializadas ⭐️
+        venda_data = self.vendas_controller.last_venda_data 
+        itens_carrinho = self.vendas_controller.last_itens_carrinho
+        pagamentos = self.vendas_controller.last_pagamentos
+        
+        # CORREÇÃO ADICIONAL: Garante que o ID da venda esteja nos dados para o recibo
+        venda_data['id'] = sale_id
+        
+        if not venda_data:
+            QMessageBox.warning(self, "Erro de Impressão", "Dados da última venda não foram encontrados. Tente novamente.")
+            return
+
+        # 2. Geração do Conteúdo
+        receipt_content = self.printer_manager.generate_receipt_content(
+            venda_data, itens_carrinho, pagamentos
+        )
+        
+        # 3. Impressão (Simulada no console)
+        self.printer_manager.print_to_console(receipt_content)
+        
+        QMessageBox.information(
+            self, 
+            "Impressão", 
+            f"Recibo da Venda #{sale_id} formatado e enviado (Verifique o console)."
+        )
+
+
+    def _print_invoice(self, sale_id: int):
+        """Chama a rotina de emissão de NF-e/NFC-e (Simulação de API)."""
+        
+        # 1. Obter Dados (Idem ao recibo, precisa dos dados da venda por ID)
+        venda_data = self.vendas_controller.last_venda_data 
+        itens_carrinho = self.vendas_controller.last_itens_carrinho
+        pagamentos = self.vendas_controller.last_pagamentos
+        
+        venda_data['id'] = sale_id
+            
+        # 2. Iniciar a Rotina Fiscal
+        nf_log = self.printer_manager.initiate_invoice_emission(
+            venda_data, itens_carrinho, pagamentos
+        )
+        
+        # 3. Exibir Status
+        QMessageBox.warning(
+            self, 
+            "Emissão NF", 
+            f"Simulação de Emissão Fiscal para Venda #{sale_id} concluída.\nDetalhes no log:\n{nf_log}"
+        )
+        # Lógica real de integração fiscal vai aqui
 
     def _show_employee_registration(self):
         # Usamos argumentos nomeados para garantir que 'self' seja o 'parent'
@@ -140,6 +235,8 @@ class PDVWindow(QMainWindow):
         else:
             # print(f"ALERTA: Stylesheet '{filename}' não encontrado em: {style_path}")
             return False
+        
+    
 
     def _toggle_theme(self):
         """Alterna entre o tema Dark (styles.qss) e o tema Light (styles_light.qss)."""
@@ -431,94 +528,174 @@ class PDVWindow(QMainWindow):
             return None
 
 
-    # Substitua este método inteiro pelo código abaixo:
-    # ui/main_window.py
 
-    # ui/main_window.py (MÉTODO _handle_finalize_sale)
+
+    def _calculate_subtotal(self):
+        """
+        CALCULA O SUBTOTAL BRUTO DA VENDA.
+        Deve somar o (Preço Unitário * Quantidade) DE CADA ITEM no carrinho.
+        Nota: Se você aplica desconto por item no CartManager, este método deve
+        somar o 'total_liquido_item' de cada item.
+        """
+        subtotal = 0.0
+        # Assumimos que cart_items_for_stock (do CartManager) contém o campo 'total_liquido_item'
+        for item in self.cart_manager.cart_items:
+            # Se você já aplica desconto por item no CartManager, use 'total_liquido_item'
+            subtotal += item.get('total_liquido_item', item['quantidade'] * item['preco'])
+        return subtotal
+
+    def _get_cart_items_data(self):
+        """
+        Prepara a lista de itens do carrinho em formato de dicionário
+        para ser salvo pelo VendasController.
+        """
+        # Garante que os itens tenham os campos de desconto/líquido que o Controller espera.
+        # O CartManager deve fornecer esses campos.
+        return [
+            {
+                'codigo': item['codigo'],
+                'nome': item['nome'],
+                'quantidade': item['quantidade'],
+                'preco_unitario': item['preco'],
+                'desconto_item': item.get('desconto_item', 0.0), # Novo Campo
+                'total_liquido_item': item.get('total_liquido_item', item['quantidade'] * item['preco']) # Novo Campo
+            }
+            for item in self.cart_manager.cart_items
+        ]
 
     def _handle_finalize_sale(self):
-        """Abre o diálogo de Checkout para confirmação de pagamento, registra a venda e atualiza o estoque."""
+        """
+        Coordena a finalização da venda, incluindo cálculo de desconto/taxa, 
+        gestão de pagamentos mistos e chamada da transação no VendasController.
+        """
         
-        total = self.cart_manager.calculate_total()
+        # --- 1. CÁLCULO DOS TOTAIS DA VENDA ---
+        subtotal = self._calculate_subtotal()
         
-        if total <= 0:
-            QMessageBox.warning(self, "Aviso", "Carrinho está vazio. Venda não finalizada.")
+        if subtotal <= 0:
+            QMessageBox.warning(self, "Aviso", "Carrinho está vazio ou total é zero. Venda não finalizada.")
             return
             
-        checkout_dialog = CheckoutDialog(total_venda=total, parent=self)
+        desconto = self.total_discount_value
+        taxa = self.service_fee_value
+        
+        valor_liquido = subtotal - desconto + taxa 
+        
+        if valor_liquido < 0:
+            QMessageBox.critical(self, "Erro", "O valor líquido não pode ser negativo. Revise o desconto.")
+            return
+
+        # --- 2. CHAMADA DO DIÁLOGO DE PAGAMENTO MISTO ---
+        checkout_dialog = CheckoutDialog(
+            subtotal_bruto=subtotal,
+            total_liquido=valor_liquido,
+            total_discount_value=desconto,
+            total_service_fee=taxa,
+            parent=self
+        )
         
         if checkout_dialog.exec() == QDialog.Accepted:
-            received = checkout_dialog.valor_recebido
-            troco = checkout_dialog.troco
+            # --- 3. PREPARAÇÃO DOS DADOS PARA O CONTROLLER ---
             
             id_funcionario = self.logged_user.get('id')
             vendedor_nome = self.logged_user.get('nome')
+            troco_recebido = checkout_dialog.troco # Leitura do troco antes de resetar
             
             if not id_funcionario or not vendedor_nome:
                 QMessageBox.critical(self, "Erro", "Dados do funcionário logado incompletos. Venda não registrada.")
                 return
-                
-            # ⭐️ PREPARAÇÃO DOS DADOS: Usamos a lista de dicionários do CartManager ⭐️
-            cart_items_for_stock = self.cart_manager.cart_items 
-            
-            # ⭐️ CORREÇÃO: A lista agora contém 5 elementos (incluindo tipo_medicao) para uso na impressão e registro ⭐️
-            itens_venda_para_registro = [(
-                item['codigo'], 
-                item['nome'], 
-                item['quantidade'], 
-                item['preco'],
-                item.get('tipo_medicao', 'Unidade') # ✅ Novo: Inclui o tipo de medição (kg ou unidade)
-            ) for item in cart_items_for_stock]
 
-            conn = self.db_connection
-            conn.execute("BEGIN TRANSACTION;") # ⭐️ INICIA A TRANSAÇÃO ⭐️
+            # 3.1. Dados da Venda Principal (Vendas)
+            venda_data = {
+                'id_funcionario': id_funcionario,
+                'vendedor_nome': vendedor_nome,
+                'valor_bruto': subtotal,
+                'desconto_aplicado': desconto,
+                'taxa_servico': taxa,
+                'total_venda': valor_liquido,
+                'valor_recebido': checkout_dialog.payment_model.get_total_paid(),
+                'troco': troco_recebido
+            }
             
+            # 3.2. Itens do Carrinho (ItensVenda)
+            itens_carrinho = self._get_cart_items_data()
+            
+            # 3.3. Pagamentos (PagamentosVenda)
+            pagamentos = checkout_dialog.payments_list
+            
+            # --- 4. CHAMADA DA TRANSAÇÃO CENTRALIZADA ---
+            # ⚠️ ASSUMINDO que o controller retorna: success, estoque_alerts, id_venda
             try:
-                # 1. ATUALIZA O ESTOQUE
-                # A função update_stock_after_sale provavelmente ainda usa a lista de dicionários
-                low_stock_alerts = update_stock_after_sale(conn, cart_items_for_stock) 
+                success, estoque_alerts, id_venda = self.vendas_controller.finalizar_venda_transacao(
+                    venda_data, 
+                    itens_carrinho, 
+                    pagamentos
+                )
+            except Exception as e:
+                QMessageBox.critical(self, "Erro de Comunicação", f"Erro inesperado no Controller: {e}")
+                return
+            
+            # --- 5. PROCESSAMENTO DO RESULTADO ---
+            if success:
+                # ⭐️ SALVA OS DADOS NO CONTROLLER PARA ACESSO POSTERIOR ⭐️
+                self.vendas_controller.last_venda_data = venda_data
+                self.vendas_controller.last_itens_carrinho = itens_carrinho
+                self.vendas_controller.last_pagamentos = pagamentos
+                            
+                # 5.1. Alertas de Estoque e Troco
+                alert_msg = ""
+                if estoque_alerts:
+                    alert_msg += "Alertas de Estoque:\n" + "\n".join(estoque_alerts)
+                    QMessageBox.warning(self, "Venda Concluída com Alertas", alert_msg)
                 
-                # 2. REGISTRA A VENDA E ITENS
-                # FINALIZAR VENDA agora recebe a tupla de 5 elementos (ajuste a função finalizar_venda se necessário)
-                venda_id = finalizar_venda(
-                    conn,
-                    itens_venda_para_registro, 
-                    total,
-                    received,
-                    troco,
-                    id_funcionario,
-                    vendedor_nome
+                troco_formatado = self._format_currency(troco_recebido)
+                
+                # 5.2. ⭐️ CHAMADA DO NOVO DIÁLOGO DE PÓS-VENDA ⭐️
+                post_sale_dialog = PostSaleDialog(
+                    sale_id=id_venda, 
+                    total_pago=venda_data['valor_recebido'],
+                    parent=self
                 )
                 
-                if not isinstance(venda_id, int) or venda_id is None:
-                    raise Exception("Falha ao obter o ID da venda.")
-                
-                # 3. CONFIRMA A TRANSAÇÃO: Se chegou aqui, tudo está OK no DB
-                conn.commit()
-                
-                # 4. PROCESSA ALERTAS E FINALIZA A UI
-                
-                # Mostra alertas de estoque
-                if low_stock_alerts:
-                    QMessageBox.warning(self, "ALERTA DE ESTOQUE BAIXO", 
-                                        "Os seguintes produtos estão com estoque crítico:\n" + "\n".join(low_stock_alerts))
+                # Executa o diálogo de opções (Recibo/NF)
+                if post_sale_dialog.exec() == QDialog.Accepted:
+                    action = post_sale_dialog.result_action
                     
-                # ⭐️ CHAMADA DO RECIBO: Envia a lista de tuplas de 5 elementos ⭐️
-                self._generate_and_print_receipt(venda_id, total, received, troco, itens_venda_para_registro) 
+                    if action == PostSaleDialog.PRINT_RECEIPT:
+                        self._print_receipt(post_sale_dialog.sale_id)
+                    elif action == PostSaleDialog.PRINT_INVOICE:
+                        self._print_invoice(post_sale_dialog.sale_id)
                 
-                # Limpa a interface
-                self.cart_manager.clear_cart()
-                self._update_cart_table()
-                self._update_total_display(0.0)
-                self.search_input.setFocus()
+                # 5.3. Exibe o Troco (se houver, após as opções de impressão)
+                if troco_recebido > 0:
+                    QMessageBox.information(self, "Sucesso & Troco", f"Troco para o cliente: {troco_formatado}", QMessageBox.StandardButton.Ok)
+
+                # 5.4. Limpar a Interface
+                self._reset_cart()
                 
-            except Exception as e:
-                # ⭐️ ROLLBACK: Se qualquer passo acima falhar, desfaz TODAS as operações ⭐️
-                conn.rollback() 
-                print(f"ERRO FATAL NA TRANSAÇÃO DE VENDA: {e}")
+            else:
+                # O Controller já registrou o erro no console/log.
                 QMessageBox.critical(self, "Erro de Transação", 
-                                    "Falha ao registrar a venda ou atualizar o estoque. A transação foi desfeita. Contate o suporte.")
-                return
+                                    "Falha ao registrar a venda. A transação foi desfeita. Verifique o log e tente novamente.")
+
+    # --- FIM DO MÉTODO _handle_finalize_sale ---
+            
+    
+    def _handle_total_discount_dialog(self):
+        """Abre um diálogo para aplicar desconto/acréscimo no total da venda."""
+        
+        # 1. Obtenha o subtotal atual do carrinho
+        subtotal = self._calculate_subtotal() # Você precisará criar este método
+        
+        # 2. Instancie e exiba o novo diálogo de desconto
+        discount_dialog = TotalDiscountDialog(subtotal, parent=self)
+        if discount_dialog.exec():
+            # Após fechar o diálogo, recupere o valor de desconto/acréscimo aplicado
+            self.total_discount_value = discount_dialog.final_discount_value
+            self.service_fee_value = discount_dialog.final_service_fee_value
+            
+            # Recalcular e atualizar o display do total (R$ 0,00)
+            self._update_total_display()
         
     def _handle_edit_quantity(self, index):
         """Lida com o clique duplo na tabela para editar a quantidade do item."""
@@ -605,15 +782,25 @@ class PDVWindow(QMainWindow):
             
         super().keyPressEvent(event)
 
+    # ui/main_window.py (dentro da classe PDVWindow)
+
     def _setup_cart_model(self):
         """Configura o Modelo de dados para a QTableView."""
-        self.cart_model = QStandardItemModel(0, 5) 
+        self.cart_model = QStandardItemModel(0, 7) 
         self.cart_model.setHorizontalHeaderLabels(["CÓDIGO", "NOME", "PREÇO UN.", "QUANT.", "TOTAL ITEM"])
         self.cart_table.setModel(self.cart_model)
+        
+        # 0. CÓDIGO (Ajuste leve)
+        self.cart_table.setColumnWidth(0, 100) 
+        # 1. NOME (Continua a maior)
         self.cart_table.setColumnWidth(1, 300)
-        self.cart_table.setColumnWidth(2, 100)
-        self.cart_table.setColumnWidth(3, 80)
-        self.cart_table.setColumnWidth(4, 100)
+        # 2. PREÇO UN. (Aumentado para garantir espaço para o título)
+        self.cart_table.setColumnWidth(2, 120) 
+        # 3. QUANT. (Aumentado para garantir espaço para o título)
+        self.cart_table.setColumnWidth(3, 100) 
+        # 4. TOTAL ITEM (Aumentado levemente)
+        self.cart_table.setColumnWidth(4, 120) 
+        
         self.cart_table.setSelectionBehavior(QTableView.SelectRows)
         self.cart_table.setEditTriggers(QTableView.NoEditTriggers)
 
@@ -785,6 +972,13 @@ class PDVWindow(QMainWindow):
 
         self.setCentralWidget(central_widget)
         self.search_input.setFocus()
+        
+     
+        # 6. ATALHO F3: Desconto/Acréscimo no Total (Checkout)
+        self.shortcut_f3 = QShortcut(QKeySequence("F3"), self)
+        # Supondo que você terá um método para abrir o diálogo de desconto no total
+        self.shortcut_f3.activated.connect(self._handle_total_discount_dialog)
+     
 
         # Colocar dentro da CLASSE PDVWindow:
 
