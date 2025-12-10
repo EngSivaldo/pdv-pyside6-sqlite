@@ -1,10 +1,18 @@
 class CartManager:
     """Gerencia a lista de itens no carrinho, os cálculos de total e a manipulação (adição/remoção)."""
     
-    def __init__(self):
+    # ⭐️ AQUI ESTÁ A MUDANÇA ESSENCIAL ⭐️
+    # ⭐️ AQUI ESTÁ A MUDANÇA ESSENCIAL ⭐️
+    def __init__(self, db_connection): 
         self.cart_items = []
-
-    # VERSÃO CORRIGIDA E FINALIZADA DO add_item
+        
+        # ⭐️ NOVO ATRIBUTO: Salva a conexão para uso futuro ⭐️
+        self.db_connection = db_connection 
+        
+        # Inicialização dos descontos/taxas para calculate_final_total
+        self.total_discount_value = 0.0
+        self.service_fee_value = 0.0
+        
     def add_item(self, product_data: tuple, quantity: float = 1.0):
         """
         Adiciona ou incrementa um item no carrinho. Soma apenas se for "Unidade".

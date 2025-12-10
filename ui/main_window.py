@@ -1,38 +1,58 @@
-# ui/main_window.py - VERSÃO LIMPA (SEM DEBUG)
+# ui/main_window.py - VERSÃO CONSOLIDADA
 
 import sqlite3
 import datetime 
 import os 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-    QLabel, QLineEdit, QTableView, QMessageBox, QCompleter, QInputDialog, QDialog, QApplication
+    QLabel, QLineEdit, QTableView, QMessageBox, QCompleter, 
+    QInputDialog, QDialog, QApplication
+    # ⭐️ Necessário para as novas funcionalidades de edição:
+    # QInputDialog já está aqui.
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem,QKeySequence, QShortcut
+from PySide6.QtCore import (
+    Qt, 
+    QLocale # ⭐️ Adicionado/Confirmado: Essencial para formatação BR
+)
+from PySide6.QtGui import (
+    QFont, QStandardItemModel, QStandardItem, 
+    QKeySequence, 
+    QShortcut # ⭐️ Adicionado/Confirmado: Para atalhos F3, F4, F12
+)
 
 # IMPORTS PARA NORMALIZAÇÃO/BUSCA SEM ACENTOS
 from unidecode import unidecode
 import re
 
-# Importa a lógica (core)
-from core.database import connect_db, create_and_populate_tables 
+# --- Importa a lógica (core) ---
+from core.database import (
+    connect_db, 
+    create_and_populate_tables, 
+    finalizar_venda,           # Confirmado
+    update_stock_after_sale    # Confirmado
+)
 from core.cart_logic import CartManager
-from core.database import finalizar_venda # <--- ADICIONE ESTA LINHA!
-# Importa as novas janelas
+from core.printer_manager import PrinterManager 
+from data.vendas_controller import VendasController
+
+# --- Importa as janelas e diálogos (UI) ---
 from ui.product_registration import ProductRegistrationWindow
 from ui.product_list import ProductListWindow 
 from ui.checkout_dialog import CheckoutDialog
-from .cadastro_funcionario_dialog import CadastroFuncionarioDialog 
-from .gerenciar_funcionarios_dialog import GerenciarFuncionariosDialog
+from ui.cadastro_funcionario_dialog import CadastroFuncionarioDialog 
+from ui.gerenciar_funcionarios_dialog import GerenciarFuncionariosDialog
 from ui.gerenciar_produtos_dialog import GerenciarProdutosDialog
 from ui.relatorios_vendas_dialog import RelatoriosVendasDialog 
-from core.database import finalizar_venda, update_stock_after_sale
 from ui.weight_input_product_dialog import WeightInputProductDialog 
 from ui.product_selection_dialog import ProductSelectionDialog
-from ui.total_discount_dialog import TotalDiscountDialog
-from data.vendas_controller import VendasController
+from ui.total_discount_dialog import TotalDiscountDialog # ⭐️ Confirmado: Usado para o atalho F3
 from ui.post_sale_dialog import PostSaleDialog
-from core.printer_manager import PrinterManager 
+# Importa as classes que você criou:
+from core.caixa_manager import CaixaManager  # Assumindo que o caminho é core/caixa_manager.py
+from ui.caixa_abertura_dialog import CaixaAberturaDialog 
+from core.cart_logic import CartManager
+from core.vendas_manager import VendasManager
+from data.vendas_controller import VendasController
 
 # ----------------------------------------------------
 # --- FUNÇÕES DE NORMALIZAÇÃO PARA BUSCA (PDV) ---
@@ -70,44 +90,63 @@ def clean_for_comparison(text):
 class PDVWindow(QMainWindow):
     # C:\Users\sival\Ponto de Venda\ui\main_window.py (Dentro da classe PDVWindow)
 
-    def __init__(self, db_connection, logged_user, parent=None): # db_connection é a conexão aberta, mas VendasController precisa da FUNÇÃO de conexão
+    def __init__(self, db_connection, logged_user, cart_manager, parent=None): 
         super().__init__(parent)
         
+        # --- 1. DEFINIÇÃO DE ATRIBUTOS CRUCIAIS (USAR APENAS UMA VEZ) ---
+        
+        # Conexão e Informações de Sessão
         self.db_connection = db_connection 
         self.logged_user = logged_user 
         
-        # 1.  CORREÇÃO: Inicialização dos atributos de desconto/taxa 
-        # Estes são os valores que serão definidos pelo TotalDiscountDialog e lidos em _handle_finalize_sale
+        # Gerenciamento de Carrinho e Caixa (Usando os argumentos passados ou instanciando)
+        self.cart_manager = cart_manager # Deve vir do argumento, não instanciado novamente abaixo
+        self.vendas_controller = VendasController(self.logged_user['id']) # Mantendo sua inicialização
+        
+
+        # Estado da UI/Tema/Impressora
+        self.current_theme = 'dark' # Definido aqui, será aplicado abaixo
+        self.printer_manager = PrinterManager()
+        
+        # ⭐️ NOVO: Inicializa o Controller de Vendas (precisa do ID do funcionário) ⭐️
+        self.vendas_controller = VendasController(self.logged_user.get('id')) 
+        
+        # ⭐️ NOVO: A instância da tela de vendas ⭐️
+        self.pdv_main_screen = None # Inicialmente nulo
+        
+        # Atributos de Venda (para Desconto/Taxa)
         self.total_discount_value = 0.0  
         self.service_fee_value = 0.0     
-        
-        # 2.  CORREÇÃO: Inicialização do VendasController 
-        # Assumimos que o VendasController é inicializado sem a função connect_db, e que ele a chama internamente.
-        # Se você implementou VendasController para ACEITAR A FUNÇÃO, use: self.vendas_controller = VendasController(connect_db)
-        # Mas se ele se auto-inicializa, use:
-        self.vendas_controller = VendasController()
-        
+
+        # --- 2. CONFIGURAÇÃO DA JANELA (Posicionamento e Título) ---
         self.setWindowTitle(f"PDV - Usuário: {self.logged_user['nome']} ({self.logged_user['cargo'].upper()})")
+        self.setGeometry(100, 100, 1000, 700) 
         
-        self.setGeometry(100, 100, 1000, 700)
+        self.caixa_manager = CaixaManager(db_connection)
+        # --- 3. GESTÃO DE CAIXA (FORÇAR ABERTURA) ---
+        if not self._ensure_caixa_aberto():
+            # Se a abertura foi cancelada, encerra o PDV
+            QMessageBox.critical(self, "Acesso Negado", "Abertura de caixa cancelada. O PDV será encerrado.")
+            self.close() 
+            return # Impede a execução do restante do __init__
+            
         
-        self.cart_manager = CartManager()
+        # 4a. Aplicação do Stylesheet (Se _apply_stylesheet for um método seu)
+        self._apply_stylesheet('styles.qss') 
         
-        # Estado do tema (dark é o padrão styles.qss)
-        self.current_theme = 'dark' 
-        
-        # --- APLICAÇÃO DO STYLESHEET ---
-        self._apply_stylesheet('styles.qss') # Carrega o tema dark padrão
-        # -----------------------------------------------
-        self.printer_manager = PrinterManager()
-
-        self._setup_ui()
+        # 4b. Setup da UI e Modelo
+        self._setup_ui() 
         self._setup_cart_model()
+        
+        # 4c. Inicialização e Atalhos
+        self._update_total_display(self.cart_manager.calculate_total())
+        
+        if hasattr(self, '_setup_autocompleter'):
+            self._setup_autocompleter()
 
-        # NOTA: O db_connection passado como argumento só é útil aqui se você
-        # for usá-lo para outras queries que não sejam de venda. 
-        # Para vendas, usamos self.vendas_controller.
-    # C:\Users\sival\Ponto de Venda\ui\main_window.py (Dentro da classe PDVWindow)
+        # Configuração do Atalho F3
+        self.shortcut_f3 = QShortcut(QKeySequence(Qt.Key_F3), self)
+        self.shortcut_f3.activated.connect(self._handle_total_discount_dialog)
 
     def _format_currency(self, value: float) -> str:
         """
@@ -334,10 +373,7 @@ class PDVWindow(QMainWindow):
         # Conecta o completer ao campo de entrada
         self.search_input.setCompleter(completer)
 
-    # Certifique-se de importar:
-# from ui.product_selection_dialog import ProductSelectionDialog
-# from ui.weight_input_product_dialog import WeightInputProductDialog
-# import re
+
     from PySide6.QtWidgets import QDialog # Import necessário
 
     # Função auxiliar para normalização (fora da classe)
@@ -355,7 +391,6 @@ class PDVWindow(QMainWindow):
         text = re.sub(r'[ç]', 'c', text)
         return text.strip()
 
-# Dentro da classe PDVWindow:
 
     def _show_selection_dialog(self, matching_products: list):
         """Chama o diálogo de seleção de produto para resolver a ambiguidade."""
@@ -677,8 +712,6 @@ class PDVWindow(QMainWindow):
                 # O Controller já registrou o erro no console/log.
                 QMessageBox.critical(self, "Erro de Transação", 
                                     "Falha ao registrar a venda. A transação foi desfeita. Verifique o log e tente novamente.")
-
-    # --- FIM DO MÉTODO _handle_finalize_sale ---
             
     
     def _handle_total_discount_dialog(self):
@@ -782,7 +815,6 @@ class PDVWindow(QMainWindow):
             
         super().keyPressEvent(event)
 
-    # ui/main_window.py (dentro da classe PDVWindow)
 
     def _setup_cart_model(self):
         """Configura o Modelo de dados para a QTableView."""
@@ -930,14 +962,14 @@ class PDVWindow(QMainWindow):
         self.manage_employee_button.clicked.connect(self._show_employee_management)
         checkout_layout.addWidget(self.manage_employee_button)
         
-        # ----------------------------------------------------------------------
+      
         # ⭐️ BOTÃO DE LOGOUT ADICIONADO AQUI ⭐️
         self.logout_button = QPushButton("🚪 SAIR (Logout)") 
         self.logout_button.setFont(QFont("Arial", 12))
         self.logout_button.setStyleSheet("background-color: #F44336; color: white; padding: 10px; border-radius: 5px;") 
         self.logout_button.clicked.connect(self._handle_logout)
         checkout_layout.addWidget(self.logout_button)
-        # ----------------------------------------------------------------------
+   
         
         is_admin = self.logged_user['cargo'] == 'admin'
 
@@ -958,6 +990,13 @@ class PDVWindow(QMainWindow):
             # 3. BLOQUEIO DE RELATÓRIOS GERAIS
             # (Mantido visível para vendedor, filtragem interna)
             pass 
+        
+                # 4. Botão Fechar caixa
+        self.fechar_caixa_button = QPushButton("🔒 FECHAR CAIXA")
+        self.fechar_caixa_button.setFont(QFont("Arial", 12))
+        self.fechar_caixa_button.setStyleSheet("background-color: #D32F2F; color: white; padding: 10px; border-radius: 5px;") 
+        self.fechar_caixa_button.clicked.connect(self.handle_fechar_caixa)
+        checkout_layout.addWidget(self.fechar_caixa_button)
             
         # 4. Botão Finalizar (VISÍVEL para todos)
         finalize_button = QPushButton("FINALIZAR VENDA (F12)")
@@ -978,9 +1017,7 @@ class PDVWindow(QMainWindow):
         self.shortcut_f3 = QShortcut(QKeySequence("F3"), self)
         # Supondo que você terá um método para abrir o diálogo de desconto no total
         self.shortcut_f3.activated.connect(self._handle_total_discount_dialog)
-     
-
-        # Colocar dentro da CLASSE PDVWindow:
+    
 
     def _handle_logout(self):
         """Lida com a confirmação e o processo de logout."""
@@ -1002,9 +1039,6 @@ class PDVWindow(QMainWindow):
         dialog = GerenciarFuncionariosDialog(self.db_connection, self)
         dialog.exec()
         
-  # ui/main_window.py (dentro da classe PDVWindow)
-
-# ... (após _show_employee_management ou similar)
 
     def _handle_open_registration(self):
         """Abre a janela de cadastro de produtos."""
@@ -1020,7 +1054,6 @@ class PDVWindow(QMainWindow):
         self.list_window = ProductListWindow(self.db_connection)
         self.list_window.exec()
     
-# ... (antes de _setup_ui)
 
     def _show_sales_reports(self):
     
@@ -1076,8 +1109,7 @@ class PDVWindow(QMainWindow):
         if msg_box.clickedButton() == print_button:
             # 2. Se o usuário escolher imprimir, chama a função de geração de recibo
             self._generate_and_print_receipt(venda_id, total, recebido, troco, itens_venda)
-            
-    import datetime # Certifique-se de que isso está importado no seu arquivo
+
 
     def _generate_and_print_receipt(self, venda_id, total, recebido, troco, itens_venda):
         """
@@ -1154,3 +1186,142 @@ class PDVWindow(QMainWindow):
             parent=self
         )
         dialog.exec()
+    
+    # --- NOVO MÉTODO: GESTÃO DE CAIXA ---
+
+    # Arquivo: ui/main_window.py (Dentro da classe PDVWindow)
+
+    # Certifique-se de que este método está dentro de PDVWindow
+    def _ensure_caixa_aberto(self):
+        """
+        Verifica se o caixa está aberto. Se não estiver, abre o diálogo de Abertura.
+        """
+        # 1. Obter dados do usuário
+        vendedor_id = self.logged_user.get('id')
+        nome_vendedor = self.logged_user.get('nome')
+        
+        if not vendedor_id:
+            # Erro de segurança/lógica se o ID não for encontrado
+            QMessageBox.critical(self, "Erro de Vendedor", "ID do funcionário logado não encontrado.")
+            return False 
+
+        # 2. Verifica se já existe um caixa aberto para este vendedor
+        if self.caixa_manager.caixa_aberto_exists(vendedor_id):
+            # Caixa já aberto, continua o carregamento da PDVWindow
+            return True
+
+        # 3. Se não estiver aberto, exibe o diálogo de abertura
+        from ui.caixa_abertura_dialog import CaixaAberturaDialog # Garanta o import aqui
+        
+        dialog = CaixaAberturaDialog(
+            self.caixa_manager, 
+            vendedor_id, 
+            nome_vendedor, 
+            self # parent
+        )
+        
+        # Executa o diálogo. Se o usuário aceitar (abrir), retorna True.
+        if dialog.exec() == QDialog.Accepted:
+            return True
+        else:
+            # Usuário cancelou ou fechou
+            return False
+
+
+    def handle_fechar_caixa(self):
+        # Garante que o diálogo de fechamento é importado (Import in-line é incomum, mas mantido se for sua prática)
+        from ui.caixa_fechamento_dialog import CaixaFechamentoDialog 
+        
+        # Presume-se que 'self.logged_user' e 'self.caixa_manager' existem.
+        vendedor_id = self.logged_user.get('id')
+        
+        # 1. Verifica se o caixa está realmente aberto para este usuário
+        if not self.caixa_manager.caixa_aberto_exists(vendedor_id):
+            QMessageBox.information(self, "Caixa Fechado", "Não há caixa aberto para este funcionário.")
+            return
+
+        # 2. Instancia e abre o diálogo de fechamento
+        # ⭐️ CORREÇÃO CRÍTICA AQUI: O 3º argumento deve ser self.printer_manager. ⭐️
+        dialog = CaixaFechamentoDialog(
+            caixa_manager=self.caixa_manager, 
+            id_funcionario_logado=vendedor_id, 
+            printer_manager=self.printer_manager, # Passa a instância do PrinterManager
+            parent=self                            # Passa a janela principal como parent
+        )
+        
+        if dialog.exec() == QDialog.Accepted:
+            # Se o fechamento for bem-sucedido (o diálogo retornou QDialog.Accepted)
+            
+            # 3. Limpar o estado do caixa na janela principal (opcional, mas recomendado)
+            # Se você tiver variáveis como self.caixa_aberto_data na PDVWindow, deve limpá-las aqui.
+            
+            QMessageBox.information(self, "Sucesso", "Caixa fechado. Você será desconectado.")
+            
+            # 4. Forçar logout ou reabertura do fluxo
+            # Exemplo: Chamar a tela de login ou fechar a janela.
+            # self.logout_user() 
+            pass
+        
+    # Arquivo: ui/main_window.py (ou PDVWindow)
+
+# ... (Dentro da classe PDVWindow) ...
+
+    def init_pdv_screen(self, id_caixa_ativo: int):
+        """
+        Instancia a tela principal de vendas e define o contexto do caixa ativo.
+        """
+        # 1. Verifica se a tela já existe e a destrói para evitar duplicidade
+        if self.pdv_main_screen:
+             self.central_widget.layout().removeWidget(self.pdv_main_screen)
+             self.pdv_main_screen.deleteLater()
+             self.pdv_main_screen = None
+
+        # 2. Instancia a tela de vendas
+        self.pdv_main_screen = PDVMainScreen(
+            vendedor_info=self.logged_user, 
+            printer_manager=self.printer_manager, 
+            parent=self.central_widget
+        )
+        
+        # 3. Injete a instância CORRETA do VendasManager e VendasController na tela:
+        # Nota: Seu PDVMainScreen foi projetado para instanciar o Controller/Manager internamente,
+        # mas precisamos garantir que ele receba o ID do caixa ativo.
+        self.pdv_main_screen.vendas_manager.set_sessao(
+            id_caixa=id_caixa_ativo, 
+            id_vendedor=self.logged_user.get('id'), 
+            nome_vendedor=self.logged_user.get('nome')
+        )
+        
+        # 4. Define a tela como o widget central ou a adiciona ao layout
+        self.central_widget.layout().addWidget(self.pdv_main_screen)
+        
+        print(f"LOG: Tela PDV iniciada. Caixa ID: {id_caixa_ativo}")
+        
+        # Opcional: Ocultar outros elementos de menu, se for o caso
+        # self.menu_bar.setVisible(False) 
+
+    def setup_main_screen(self):
+        """
+        Método chamado após o login para garantir que o caixa esteja aberto 
+        e carregar a tela principal de vendas.
+        """
+        # 1. ⭐️ Garante que o caixa esteja aberto (ou abre o diálogo) ⭐️
+        caixa_aberto_com_sucesso = self._ensure_caixa_aberto()
+
+        if caixa_aberto_com_sucesso:
+            # 2. Busca o ID do caixa ativo
+            caixa_info = self.caixa_manager.get_caixa_aberto(self.logged_user.get('id'))
+            
+            if caixa_info:
+                id_caixa = caixa_info['id']
+                # 3. ⭐️ CHAMA A TELA DE VENDAS ⭐️
+                self.init_pdv_screen(id_caixa) 
+                # Opcional: Aqui você pode centralizar o foco no input de código de barras
+                # self.pdv_main_screen.input_codigo.setFocus() 
+            else:
+                QMessageBox.critical(self, "Erro Fatal", "Caixa aberto, mas a informação da sessão não pôde ser recuperada.")
+                self.close() # Fecha a aplicação se o contexto for perdido
+        else:
+            # Usuário cancelou a abertura do caixa ou falhou.
+            QMessageBox.warning(self, "Acesso Negado", "Não é possível iniciar a sessão sem um caixa ativo.")
+            self.close() # Fecha a aplicação

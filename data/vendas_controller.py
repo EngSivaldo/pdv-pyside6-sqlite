@@ -2,21 +2,26 @@
 
 import sqlite3
 import datetime as dt
-from typing import List, Dict, Any, Tuple # ⭐️ Tuple importado corretamente no topo
+from typing import List, Dict, Any, Tuple 
 from PySide6.QtWidgets import QMessageBox
+
 # Importa as funções de conexão e estoque do seu core/database.py
-from core.database import connect_db, update_stock_after_sale, finalizar_venda # <--- Importações cruciais
+from core.database import connect_db, update_stock_after_sale, finalizar_venda 
+
+# ⭐️ NOVO IMPORT: Gerenciador de Caixa ⭐️
+from core.caixa_manager import CaixaManager
 
 class VendasController:
     """
     Controlador de Vendas. Coordena as operações do banco de dados (DB)
-    e adiciona a lógica de negócios (desconto, taxa, pagamentos mistos).
+    e adiciona a lógica de negócios (desconto, taxa, pagamentos mistos e CONTROLE DE CAIXA).
     """
     
-    def __init__(self):
+    def __init__(self, vendedor_id):
         self.get_db_connection = connect_db 
+        self.vendedor_id = vendedor_id # ⭐️ ARMAZENA O ID ⭐️
         self._check_and_update_tables() # Garante que as tabelas têm os novos campos
-        # ⭐️ Variáveis para armazenar os dados da última venda (necessário para impressão) ⭐️
+        # Variáveis para armazenar os dados da última venda (necessário para impressão)
         self.last_venda_data = {}
         self.last_itens_carrinho = []
         self.last_pagamentos = []
@@ -24,8 +29,7 @@ class VendasController:
     def _check_and_update_tables(self):
         """
         Verifica se as tabelas Vendas, ItensVenda e PagamentosVenda possuem
-        os campos necessários para Desconto/Taxa e Pagamento Misto.
-        Se faltarem, adiciona-os (ALTER TABLE).
+        os campos necessários (incluindo o id_caixa).
         """
         conn = self.get_db_connection()
         if conn is None: return
@@ -37,12 +41,17 @@ class VendasController:
             cursor.execute("PRAGMA table_info(Vendas)")
             columns = [info[1] for info in cursor.fetchall()]
             
+            # Colunas de Financeiro
             if 'valor_bruto' not in columns:
                 cursor.execute("ALTER TABLE Vendas ADD COLUMN valor_bruto REAL DEFAULT 0.0")
             if 'desconto_aplicado' not in columns:
                 cursor.execute("ALTER TABLE Vendas ADD COLUMN desconto_aplicado REAL DEFAULT 0.0")
             if 'taxa_servico' not in columns:
                 cursor.execute("ALTER TABLE Vendas ADD COLUMN taxa_servico REAL DEFAULT 0.0")
+            
+            # ⭐️ NOVO CAMPO: ID do Caixa ⭐️
+            if 'id_caixa' not in columns:
+                cursor.execute("ALTER TABLE Vendas ADD COLUMN id_caixa INTEGER")
             
             # --- MIGRACAO ITENSVENDA ---
             cursor.execute("PRAGMA table_info(ItensVenda)")
@@ -54,6 +63,7 @@ class VendasController:
                 cursor.execute("ALTER TABLE ItensVenda ADD COLUMN total_liquido_item REAL DEFAULT 0.0")
 
             # --- CRIACAO PAGAMENTOSVENDA ---
+            # Assume que a FK PagamentosVenda -> Vendas já existe ou será criada aqui/no database.py
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS PagamentosVenda (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,7 +75,7 @@ class VendasController:
             """)
             
             conn.commit()
-            print("LOG: Estrutura de Vendas atualizada com sucesso.")
+            print("LOG: Estrutura de Vendas atualizada com sucesso (incluindo id_caixa).")
             
         except sqlite3.Error as e:
             QMessageBox.critical(None, "Erro de Migração do BD", f"Falha ao atualizar tabelas de Vendas: {e}")
@@ -76,25 +86,40 @@ class VendasController:
     def finalizar_venda_transacao(self, venda_data: Dict[str, Any], itens_carrinho: List[Dict[str, Any]], pagamentos: List[Dict[str, Any]]) -> Tuple[bool, List[str], int]:
         """
         Orquestra a transação completa: registra a venda, os itens, os pagamentos e dá baixa no estoque.
+        Adiciona a verificação e vinculação do Caixa Ativo.
         Retorna (True/False, Lista de Alertas de Estoque, ID da Venda).
         """
         venda_id = 0 
         conn = self.get_db_connection()
         
         if conn is None:
-            return False, [], venda_id 
+            return False, ["ERRO: Falha na conexão com o banco de dados."], venda_id 
 
+        # ⭐️ 1. VERIFICAR CAIXA ABERTO E OBTER ID ⭐️
+        # O CaixaManager usa a mesma conexão, garantindo que o estado é o mais recente.
+        caixa_manager = CaixaManager(conn)
+        caixa_aberto = caixa_manager.get_caixa_aberto(self.vendedor_id)
+        
+        if not caixa_aberto:
+            # Não pode vender se o caixa não estiver aberto
+            # O ID da venda será 0.
+            conn.close()
+            return False, ["ERRO CRÍTICO: Não é possível finalizar a venda. O caixa deve estar ABERTO."], 0
+            
+        id_caixa = caixa_aberto['id']
+        # ----------------------------------------
+        
         estoque_alerts = []
         
         try:
             cursor = conn.cursor()
             
-            # --- 1.1. Inserir na tabela Vendas ---
+            # --- 1.1. Inserir na tabela Vendas (AGORA COM id_caixa) ---
             cursor.execute("""
                 INSERT INTO Vendas (
                     data_hora, total_venda, valor_recebido, troco, id_funcionario, vendedor_nome,
-                    valor_bruto, desconto_aplicado, taxa_servico
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    valor_bruto, desconto_aplicado, taxa_servico, id_caixa 
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
                 venda_data['total_venda'],
@@ -104,7 +129,8 @@ class VendasController:
                 venda_data['vendedor_nome'],
                 venda_data['valor_bruto'],
                 venda_data['desconto_aplicado'],
-                venda_data['taxa_servico']
+                venda_data['taxa_servico'],
+                id_caixa # ⭐️ VALOR INSERIDO ⭐️
             ))
             
             venda_id = cursor.lastrowid 
@@ -149,14 +175,18 @@ class VendasController:
             # 3. COMMIT DA TRANSAÇÃO
             conn.commit()
             
-            # ⭐️ SUCESSO: Retorna os 3 valores esperados
+            # ⭐️ 4. SUCESSO: Armazenar dados para impressão (recibo) ⭐️
+            self.last_venda_data = venda_data
+            self.last_venda_data['id'] = venda_id # Atualiza o ID
+            self.last_itens_carrinho = itens_carrinho
+            self.last_pagamentos = pagamentos
+            
             return True, estoque_alerts, venda_id 
 
         except Exception as e:
             conn.rollback()
             print(f"Erro CRÍTICO ao finalizar transação de venda: {e}")
             
-            # ⭐️ ERRO: Retorna os 3 valores esperados
             return False, [f"Falha na transação: {e}"], 0
             
         finally:
@@ -177,7 +207,7 @@ class VendasController:
                 SELECT 
                     v.venda_id,
                     v.data_hora,
-                    v.vendedor_nome, -- Usando o nome da Vendas (evita JOIN com Funcionarios se não precisar)
+                    v.vendedor_nome, 
                     v.valor_bruto,
                     v.desconto_aplicado,
                     v.taxa_servico,
