@@ -7,4 +7,5 @@ venv/
 .venv/
 
 # Arquivo de Banco de Dados SQLite (IMPORTANTE)
-pdv_database.db
+pdv_database.dbpdv.db
+__pycache__/
