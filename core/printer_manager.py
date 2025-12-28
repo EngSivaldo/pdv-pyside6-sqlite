@@ -33,6 +33,11 @@ class PrinterManager:
         print(content)
         print("=== FIM IMPRESSÃO ===" + "\n")
         
+    # Adicione esta linha logo abaixo para resolver o erro:
+    def print_to_console(self, content: str):
+        """Alias para print_text para compatibilidade com a main_window."""
+        self.print_text(content)
+        
     # -----------------------------------------------------------------
     # A. RECIBO (NÃO FISCAL)
     # -----------------------------------------------------------------
